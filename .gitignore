@@ -8,3 +8,7 @@ artifacts/
 *.egg-info/
 dist/
 build/
+
+tests/.tmp/
+tests/_session_artifacts/
+pytest-cache-files-*/

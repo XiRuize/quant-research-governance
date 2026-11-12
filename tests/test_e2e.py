@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +12,7 @@ from qrg.cli import main
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "spec" / "cleaning.spec.json"
-TMP = Path(__file__).resolve().parent / ".tmp" / "e2e"
+BASE = Path(__file__).resolve().parent / ".tmp" / "e2e"
 
 
 def _panel(bad: bool = False) -> pd.DataFrame:
@@ -47,16 +48,16 @@ def _factors() -> pd.DataFrame:
 
 
 def _setup(bad: bool = False) -> Path:
-    shutil.rmtree(TMP, ignore_errors=True)
-    TMP.mkdir(parents=True)
-    _panel(bad).to_csv(TMP / "panel.csv", index=False)
-    _factors().to_csv(TMP / "factors.csv", index=False)
-    return TMP
+    base = BASE / f"case-{uuid.uuid4().hex}"
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    _panel(bad).to_csv(base / "panel.csv", index=False)
+    _factors().to_csv(base / "factors.csv", index=False)
+    return base
 
 
-def test_end_to_end_writes_artifacts(capsys) -> None:
-    base = _setup()
-    code = main(
+def _run(base: Path) -> int:
+    return main(
         [
             "clean",
             "--spec",
@@ -69,6 +70,11 @@ def test_end_to_end_writes_artifacts(capsys) -> None:
             str(base / "out"),
         ]
     )
+
+
+def test_end_to_end_writes_artifacts(capsys) -> None:
+    base = _setup()
+    code = _run(base)
     out = base / "out"
     assert code == 0, capsys.readouterr()
     for name in (QUALITY_REPORT, CLEAN_REPORT, SENSITIVITY, TRADING_FLAGS, MANIFEST):
@@ -81,18 +87,6 @@ def test_end_to_end_writes_artifacts(capsys) -> None:
 
 def test_blocking_data_returns_3(capsys) -> None:
     base = _setup(bad=True)
-    code = main(
-        [
-            "clean",
-            "--spec",
-            str(SPEC),
-            "--input",
-            str(base / "panel.csv"),
-            "--factors",
-            str(base / "factors.csv"),
-            "--out",
-            str(base / "out"),
-        ]
-    )
+    code = _run(base)
     assert code == 3
     assert verify_manifest(base / "out")
