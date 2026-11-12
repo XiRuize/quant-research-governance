@@ -122,6 +122,8 @@ class _Lifecycle:
     names: list[tuple[date, int, str]] = field(default_factory=list)
     boards: list[tuple[date, int, str]] = field(default_factory=list)
     st_events: list[tuple[date, int, bool]] = field(default_factory=list)
+    #: 由简称/二手渠道推断的 ST 事件行号；这些事件只能标 proxy，不能当权威。
+    st_proxy_indexes: set[int] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------- 工具函数
@@ -460,8 +462,12 @@ class SecurityMasterImpl:
                 lifecycle.boards.append((day, index, payload["board"]))
             elif event.event == "st_on":
                 lifecycle.st_events.append((day, index, True))
+                if payload.get("proxy"):
+                    lifecycle.st_proxy_indexes.add(index)
             elif event.event == "st_off":
                 lifecycle.st_events.append((day, index, False))
+                if payload.get("proxy"):
+                    lifecycle.st_proxy_indexes.add(index)
             else:  # pragma: no cover - _EventIn 已限制枚举
                 raise SpecError(f"event #{index}: unsupported event {event.event!r}")
 
@@ -524,7 +530,20 @@ class SecurityMasterImpl:
         if board is None:
             board = lifecycle.listing_board
         is_st = bool(_latest(lifecycle.st_events, day, default=False))
-        st_status = "known" if lifecycle.st_events else "unknown"
+        # 判定最新 ST 事件的来源：没有事件 = unknown；事件带 proxy = proxy；否则 known
+        latest_st: tuple[date, int, bool] | None = None
+        for ev_day, ev_index, ev_value in lifecycle.st_events:
+            if ev_day <= day and (latest_st is None or (ev_day, ev_index) > (latest_st[0], latest_st[1])):
+                latest_st = (ev_day, ev_index, ev_value)
+        if latest_st is None:
+            st_status = "unknown"
+            is_st = False
+        elif latest_st[1] in lifecycle.st_proxy_indexes:
+            st_status = "proxy"
+            is_st = bool(latest_st[2])
+        else:
+            st_status = "known"
+            is_st = bool(latest_st[2])
 
         return SecurityState(
             code=normalised,

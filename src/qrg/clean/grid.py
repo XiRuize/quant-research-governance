@@ -29,6 +29,7 @@ from ..api import (
 RULE_HIGH_SUSPENSION = "GRID.high_suspension_rate"
 RULE_ST_UNKNOWN = "GRID.st_unknown"
 RULE_LIMIT_AMBIGUOUS = "GRID.limit_ambiguous"
+RULE_ST_PROXY = "GRID.st_proxy"
 RULE_PANEL_CODE_MISSING = "GRID.panel_code_missing"
 RULE_COVERAGE_GAP = "GRID.master_coverage_gap"
 RULE_LOW_DAILY_COVERAGE = "GRID.low_daily_coverage"
@@ -108,6 +109,7 @@ def build_grid(
     st_pct: list[float] = []
     st_flags: list[bool] = []
     st_unknown: list[bool] = []
+    st_proxy: list[bool] = []
     new_flags: list[bool] = []
     for ts, code in zip(merged["trade_date"], merged["code"]):
         day = ts.date()
@@ -117,11 +119,14 @@ def build_grid(
             st_pct.append(float("nan"))
             st_flags.append(False)
             st_unknown.append(True)
+            st_proxy.append(False)
             new_flags.append(False)
             continue
         pct.append(float(regime.limit_pct(state, day)))
         st_flags.append(bool(state.is_st))
-        unknown = getattr(state, "st_status", "known") == "unknown"
+        status = getattr(state, "st_status", "known")
+        unknown = status == "unknown"
+        st_proxy.append(status == "proxy")
         st_unknown.append(unknown)
         if unknown:
             st_state = replace(state, is_st=True)
@@ -133,6 +138,7 @@ def build_grid(
     merged["limit_pct"] = pct
     merged["is_st"] = st_flags
     merged["is_st_unknown"] = st_unknown
+    merged["is_st_proxy"] = st_proxy
     merged["is_new"] = new_flags
     merged["suspended"] = merged["close"].isna()
     merged["listed"] = True
@@ -196,6 +202,7 @@ def build_grid(
             "limit_ambiguous",
             "is_st",
             "is_st_unknown",
+            "is_st_proxy",
             "is_new",
             "tradable",
             "listed",
@@ -210,6 +217,7 @@ def build_grid(
             "limit_locked": int(flags["limit_locked"].sum()),
             "limit_ambiguous": int(flags["limit_ambiguous"].sum()),
             "st_unknown": int(flags["is_st_unknown"].sum()),
+            "st_proxy": int(flags["is_st_proxy"].sum()),
             "tradable": int(flags["tradable"].sum()),
         }
     )
@@ -221,6 +229,16 @@ def build_grid(
                 message="ST history unavailable; limit rules may be 5% instead of board pct",
                 scope={"rate": float(flags["is_st_unknown"].mean())},
                 row_count=int(flags["is_st_unknown"].sum()),
+            )
+        )
+    if int(flags["is_st_proxy"].sum()) > 0:
+        report.add(
+            RuleHit(
+                rule_id=RULE_ST_PROXY,
+                severity=Severity.WARN,
+                message="ST status inferred from short names (proxy); not authoritative",
+                scope={"rate": float(flags["is_st_proxy"].mean())},
+                row_count=int(flags["is_st_proxy"].sum()),
             )
         )
     if int(flags["limit_ambiguous"].sum()) > 0:

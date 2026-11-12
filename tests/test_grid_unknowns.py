@@ -101,3 +101,15 @@ def test_low_daily_coverage_is_flagged() -> None:
     flags, report = build(panel)
     assert "GRID.low_daily_coverage" in {h.rule_id for h in report.hits}
     assert report.meta["min_daily_coverage"] == 0.0
+
+
+def test_st_proxy_is_flagged_and_used_for_limit() -> None:
+    proxy = [{"code": "600001", "event": "st_on", "effective_date": str(D1), "payload": {"proxy": True}}]
+    panel = pd.DataFrame([row(D1, "600001", 10.0), row(D2, "600001", 10.4)])
+    flags, report = build(panel, master(proxy))
+    d2 = flags[(flags["trade_date"] == pd.Timestamp(D2))].iloc[0]
+    assert bool(d2["is_st_proxy"]) is True
+    assert bool(d2["is_st"]) is True
+    assert d2["limit_pct"] == pytest.approx(0.05)
+    assert bool(d2["limit_ambiguous"]) is False
+    assert "GRID.st_proxy" in {h.rule_id for h in report.hits}

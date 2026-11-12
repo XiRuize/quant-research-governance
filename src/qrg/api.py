@@ -37,6 +37,7 @@ FLAG_COLUMNS: tuple[str, ...] = (
     "limit_ambiguous",
     "is_st",
     "is_st_unknown",
+    "is_st_proxy",
     "is_new",
     "tradable",
     "listed",
