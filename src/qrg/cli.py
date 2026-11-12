@@ -152,6 +152,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
     panel, r = normalize(panel)  # type: ignore[operator]
     reports.append(r)
+    steps.extend(["normalize", "validate"])
 
     reports.append(validate(panel, spec))  # type: ignore[operator]
 
