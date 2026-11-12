@@ -136,7 +136,11 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--regime-rules", help="制度日历规则 json")
     clean.add_argument("--rules-dir", default=str(REPO_ROOT / "rules"), help="规则目录（provenance 哈希用）")
     clean.add_argument("--run-id", help="运行 id；缺省由产物 hash 派生")
+    clean.add_argument("--registry", help="trial registry 目录（写入一条试验记录）")
     clean.add_argument("--scan", help="静态未来函数扫描目录/文件")
+
+    gate = sub.add_parser("gate", help="校验产物 hash 与 provenance")
+    gate.add_argument("--dir", required=True, help="clean 的产物目录")
 
     simulate = sub.add_parser("simulate", help="成交模拟")
     simulate.add_argument("--orders", required=True, help="orders csv: order_id,trade_date,code,side,qty,ref_price")
@@ -289,6 +293,17 @@ def cmd_clean(args: argparse.Namespace) -> int:
         {"steps": steps, "rows": int(len(panel))},
     )
     write_record(args.out, record)
+
+    if args.registry:
+        from .gov.registry import TrialRegistry
+
+        trial = TrialRegistry(args.registry)
+        trial.register(
+            spec_version=spec.spec_version,
+            config={"steps": steps, "rows": int(len(panel))},
+            note=f"qrg clean {run_id}",
+            run_id=run_id,
+        )
 
     summary = {
         "ok": decision.status != "blocked",
@@ -486,6 +501,32 @@ def cmd_tail(args: argparse.Namespace) -> int:
     return 0 if report.ok else 3
 
 
+def cmd_gate(args: argparse.Namespace) -> int:
+    """校验产物完整性：manifest hash + provenance + gate 结论。"""
+    from .clean.artifacts import verify_manifest
+    from .gov.provenance import load_record
+
+    out = Path(args.dir)
+    try:
+        manifest_ok = verify_manifest(out)
+        record = load_record(out)
+        gate_payload = json.loads((out / "gate.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"gate error: {exc}", file=sys.stderr)
+        return 4
+
+    status = gate_payload.get("status", "blocked")
+    summary = {
+        "manifest_ok": manifest_ok,
+        "gate_status": status,
+        "run_id": record.run_id,
+        "spec_version": record.spec_version,
+        "artifacts": len(record.artifacts),
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0 if manifest_ok and status != "blocked" else 3
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -499,6 +540,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_capacity(args)
     if args.command == "tail":
         return cmd_tail(args)
+    if args.command == "gate":
+        return cmd_gate(args)
     return int(args.func(args))
 
 

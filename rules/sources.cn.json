@@ -1,0 +1,117 @@
+{
+  "spec_version": "1.0",
+  "description": "来源可信度分级与冲突仲裁口径：tier 越小越可信。",
+  "notes": [
+    "source_rules 按 source_id 精确映射（忽略大小写与首尾空白），优先级高于域名规则。",
+    "domain_rules 按域名后缀匹配，最长后缀优先；仅在主机名等于后缀或以 .suffix 结尾时命中。",
+    "tiers 的键为 1..5；5 表示传闻/未知，label 中保留 UNKNOWN 便于审计。",
+    "com.cn 是宽泛兜底媒体域，命中具体交易所域（如 sse.com.cn）时按最长后缀覆盖。"
+  ],
+  "tiers": {
+    "1": "官方",
+    "2": "通讯社",
+    "3": "财经媒体",
+    "4": "社媒",
+    "5": "传闻/未知 (UNKNOWN)"
+  },
+  "source_rules": {
+    "gov": 1,
+    "csrc": 1,
+    "sse": 1,
+    "szse": 1,
+    "bse": 1,
+    "xinhua": 2,
+    "reuters": 2,
+    "bloomberg": 2,
+    "caixin": 3,
+    "eastmoney": 3,
+    "xueqiu": 3,
+    "weibo": 4,
+    "twitter": 4,
+    "x": 4,
+    "rumor": 5,
+    "unknown": 5
+  },
+  "domain_rules": [
+    {
+      "suffix": "gov.cn",
+      "tier": 1,
+      "source_id": "gov"
+    },
+    {
+      "suffix": "csrc.gov.cn",
+      "tier": 1,
+      "source_id": "csrc"
+    },
+    {
+      "suffix": "sse.com.cn",
+      "tier": 1,
+      "source_id": "sse"
+    },
+    {
+      "suffix": "szse.cn",
+      "tier": 1,
+      "source_id": "szse"
+    },
+    {
+      "suffix": "bse.cn",
+      "tier": 1,
+      "source_id": "bse"
+    },
+    {
+      "suffix": "reuters.com",
+      "tier": 2,
+      "source_id": "reuters"
+    },
+    {
+      "suffix": "xinhuanet.com",
+      "tier": 2,
+      "source_id": "xinhua"
+    },
+    {
+      "suffix": "bloomberg.com",
+      "tier": 2,
+      "source_id": "bloomberg"
+    },
+    {
+      "suffix": "caixin.com",
+      "tier": 3,
+      "source_id": "caixin"
+    },
+    {
+      "suffix": "eastmoney.com",
+      "tier": 3,
+      "source_id": "eastmoney"
+    },
+    {
+      "suffix": "xueqiu.com",
+      "tier": 3,
+      "source_id": "xueqiu"
+    },
+    {
+      "suffix": "weibo.com",
+      "tier": 4,
+      "source_id": "weibo"
+    },
+    {
+      "suffix": "weibo.cn",
+      "tier": 4,
+      "source_id": "weibo"
+    },
+    {
+      "suffix": "twitter.com",
+      "tier": 4,
+      "source_id": "twitter"
+    },
+    {
+      "suffix": "x.com",
+      "tier": 4,
+      "source_id": "twitter"
+    },
+    {
+      "suffix": "com.cn",
+      "tier": 3,
+      "source_id": "cn_media"
+    }
+  ]
+}

@@ -6,7 +6,7 @@
 3. 所有口径可版本化、可回溯、可哈希。
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from .api import (  # noqa: F401
     AuditReport,
@@ -16,5 +16,6 @@ from .api import (  # noqa: F401
     Severity,
     SpecError,
 )
+
 
 

@@ -58,6 +58,9 @@ spec ─┬─> normalize ─> validate ─┬─> adjust ─┐
 | D1 ADV/参与率 | `src/qrg/capacity/adv.py` | ✅ |
 | D2 容量曲线 | `src/qrg/capacity/curve.py` | ✅ |
 | D3 尾部情景 | `src/qrg/tail/scenarios.py` | ✅ |
+| G1 采集快照 | `src/qrg/text/ingest.py` | ✅ |
+| G5 来源分级 | `src/qrg/text/sources.py` | ✅ |
+| G6 事件 PIT | `src/qrg/text/event_pit.py` | ✅ |
 
 ## v0.3 新增的 CLI
 
