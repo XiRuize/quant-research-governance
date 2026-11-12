@@ -1,7 +1,0 @@
-{
-  "clean_report.json": "sha256:569c2b61c27fbd1cadeebb14390f2f326773087f9ddae332237aadf0929b9f02",
-  "cleaning_sensitivity.json": "sha256:e3e9ac837789b507b3f7c1753d78557b3b4807ccde1485c99945edcaa2f1c880",
-  "data_quality_report.json": "sha256:129abd084d22dd3b57b0243d62b2a552e2871328bce53c63a44538b7d4a4ab4b",
-  "spec_version": "0.1.0",
-  "trading_flags.parquet": "sha256:4b1b18fce1487b9794dca0e40868a15b5c0830a20f6198236dc66d7535ca3f70"
-}
