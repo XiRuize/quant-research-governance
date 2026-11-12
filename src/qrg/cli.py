@@ -138,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--run-id", help="运行 id；缺省由产物 hash 派生")
     clean.add_argument("--registry", help="trial registry 目录（写入一条试验记录）")
     clean.add_argument("--scan", help="静态未来函数扫描目录/文件")
+    clean.add_argument("--no-limit", help="无涨跌幅限制日表 (code,trade_date)")
+    clean.add_argument("--suspensions", help="停复牌区间表 (code,start_date,end_date)")
 
     gate = sub.add_parser("gate", help="校验产物 hash 与 provenance")
     gate.add_argument("--dir", required=True, help="clean 的产物目录")
@@ -241,7 +243,11 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
     start = pd.to_datetime(panel["trade_date"]).min().date()
     end = pd.to_datetime(panel["trade_date"]).max().date()
-    flags, r = grid_stage(panel, calendar, master, regime, start, end, spec)  # type: ignore[operator]
+    no_limit = read_table(args.no_limit) if args.no_limit else None
+    suspensions = read_table(args.suspensions) if args.suspensions else None
+    flags, r = grid_stage(  # type: ignore[operator]
+        panel, calendar, master, regime, start, end, spec, no_limit=no_limit, suspensions=suspensions
+    )
     reports.append(r)
     steps.append("grid")
 

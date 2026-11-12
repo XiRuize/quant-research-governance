@@ -113,3 +113,25 @@ def test_st_proxy_is_flagged_and_used_for_limit() -> None:
     assert d2["limit_pct"] == pytest.approx(0.05)
     assert bool(d2["limit_ambiguous"]) is False
     assert "GRID.st_proxy" in {h.rule_id for h in report.hits}
+
+
+def test_no_limit_day_is_marked() -> None:
+    panel = pd.DataFrame([row(D1, "600001", 10.0), row(D2, "600001", 11.0)])
+    nl = pd.DataFrame([{"code": "600001", "trade_date": D2}])
+    flags, report = build_grid(panel, SessionCalendar(DAYS), master(), RegimeCalendar(), D1, D3, no_limit=nl)
+    d2 = flags[(flags["trade_date"] == pd.Timestamp(D2))].iloc[0]
+    assert bool(d2["no_limit"]) is True
+    assert d2["limit_pct"] == float("inf")
+    assert bool(d2["limit_up"]) is False
+    assert "GRID.no_limit_days" in {h.rule_id for h in report.hits}
+
+
+def test_announced_suspension_overrides_missing_rows() -> None:
+    panel = pd.DataFrame([row(D1, "600001", 10.0), row(D2, "600001", 10.0)])
+    susp = pd.DataFrame([{"code": "600001", "start_date": D2, "end_date": D2}])
+    flags, report = build_grid(panel, SessionCalendar(DAYS), master(), RegimeCalendar(), D1, D3, suspensions=susp)
+    d2 = flags[(flags["trade_date"] == pd.Timestamp(D2))].iloc[0]
+    assert bool(d2["suspended"]) is True
+    assert bool(d2["suspension_announced"]) is True
+    assert bool(d2["tradable"]) is False
+    assert "GRID.suspension_announced" in {h.rule_id for h in report.hits}

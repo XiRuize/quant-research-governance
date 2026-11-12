@@ -66,3 +66,31 @@ python -m qrg clean --spec spec/cleaning.spec.json `
   --industry-rules examples/_real/csmar_sept/industry.json `
   --out examples/_real/csmar_sept/out
 ```
+
+## v0.5：性能与制度日历补全
+
+### 网格向量化
+
+- `SecurityMasterImpl.state_arrays()`：按 (code, day) 逐对计算，不建 DataFrame、不做 merge；
+- `RegimeCalendar.limit_frame()`：按板块/生效区间 searchsorted，ST 与新股无限制向量化；
+- 网格自动选择向量路径，缺任一能力时退回逐行循环（协议兼容）。
+
+| 场景 | 优化前 | 优化后 |
+|---|---|---|
+| 网格（116,755 行） | 2.14s | **1.49s** |
+| 端到端（含 normalize/lookahead） | ~11s | ~11s |
+
+端到端没有明显下降，因为瓶颈已经转移到 `normalize`（约 3.5s）与 `lookahead` 回放（约 2.8s）——下一步要优化这两处，才谈得上“全市场十年”。
+
+### 无涨跌幅限制日（TRD_NoLimit）
+
+- 9 月共 63 个 (code, day) 无限制记录；
+- 网格新增 `no_limit` 标记，当日 `limit_pct=inf`、不做锁死判定，审计输出 `GRID.no_limit_days`（INFO）。
+
+### 停复牌区间（TSR_Stkstat）
+
+- 9 月 47 段停牌区间（Type=1），覆盖 201 个 (code, day)；
+- 网格新增 `suspension_announced`：即使当天有行情行，也按公告停牌处理；
+- `suspended = 缺行 ∪ 公告停牌`，审计输出 `GRID.suspension_announced`（INFO）。
+
+9 月停牌从 167 行升到 201 行——多出来的不是噪声，是“有行但公告停牌”的部分。

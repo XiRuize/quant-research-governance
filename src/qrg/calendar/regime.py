@@ -10,6 +10,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+import numpy as np
+import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..api import FeeRule, LimitRule, SecurityState, SpecError
@@ -153,6 +155,46 @@ class RegimeCalendar:
 
     def fees(self, day: date) -> Sequence[FeeRule]:
         return [r.to_rule() for r in self.doc.fees if r.covers(day)]
+
+    def limit_frame(self, frame: pd.DataFrame) -> np.ndarray:
+        """向量化涨跌停幅度：frame 需含 board / is_st / listed_on / trade_date。
+
+        与 ``limit_pct`` 同口径（新板无限制、ST 覆盖、按生效区间取值），用于网格提速。
+        """
+        if frame.empty:
+            return np.empty(0, dtype="float64")
+        days = pd.to_datetime(frame["trade_date"]).to_numpy(dtype="datetime64[D]")
+        boards = frame["board"].astype("string").fillna("").to_numpy()
+        out = np.full(len(frame), np.nan, dtype="float64")
+
+        for board in pd.unique(boards):
+            mask = boards == board
+            rows = [r for r in self._limits if r.board == board]
+            if not rows:
+                continue
+            dates = np.asarray([np.datetime64(r.effective_from, "D") for r in rows])
+            pcts = np.asarray([float(r.pct) for r in rows])
+            pos = np.searchsorted(dates, days[mask], side="right") - 1
+            values = np.where(pos >= 0, pcts[np.clip(pos, 0, None)], np.nan)
+            out[mask] = values
+
+        st_rows = self.doc.st
+        if st_rows:
+            st_mask = frame["is_st"].to_numpy(dtype=bool)
+            if st_mask.any():
+                st_pct = np.asarray(
+                    [float(st_rows.get(b).pct) if b in st_rows else np.nan for b in boards[st_mask]]
+                )
+                out[st_mask] = st_pct
+
+        rule = self.doc.new_listing
+        if rule:
+            listed = pd.to_datetime(frame["listed_on"], errors="coerce").to_numpy(dtype="datetime64[D]")
+            in_boards = np.isin(boards, np.asarray(rule.boards, dtype=object))
+            recent = (days - listed).astype("timedelta64[D]").astype(float) < float(rule.no_limit_days)
+            effective = days >= np.datetime64(rule.effective_from, "D")
+            out[in_boards & recent & effective & ~pd.isna(frame["listed_on"]).to_numpy()] = NO_LIMIT
+        return out
 
     def fee_items(self, day: date) -> dict[str, list[FeeRule]]:
         out: dict[str, list[FeeRule]] = {}

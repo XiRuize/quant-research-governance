@@ -30,6 +30,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..api import CODE_LENGTH, SecurityState, SpecError
@@ -556,6 +558,104 @@ class SecurityMasterImpl:
             tick_size=self._tick_size(normalised, board, lifecycle),
             st_status=st_status,
         )
+
+    def state_arrays(self, codes: Sequence[str], days: Sequence[Any]) -> dict[str, np.ndarray]:
+        """逐对 (code, day) 的向量化 as-of 查询。
+
+        与逐行 ``state()`` 结果一致，但不构造 DataFrame、不做 merge；网格直接用它。
+        返回 board / is_st / st_status / listed_on 四个等长数组。
+        """
+        codes_arr = np.asarray([str(c) for c in codes], dtype=object)
+        day_arr = np.asarray([_as_date(d) for d in days], dtype="datetime64[D]")
+        n = int(codes_arr.size)
+        board = np.full(n, "", dtype=object)
+        is_st = np.zeros(n, dtype=bool)
+        status = np.full(n, "unknown", dtype=object)
+        listed = np.full(n, np.datetime64("NaT", "D"), dtype="datetime64[D]")
+        if n == 0:
+            return {"board": board, "is_st": is_st, "st_status": status, "listed_on": listed}
+
+        order = np.argsort(codes_arr, kind="stable")
+        codes_sorted = codes_arr[order]
+        days_sorted = day_arr[order]
+
+        start = 0
+        while start < n:
+            end = start + 1
+            while end < n and codes_sorted[end] == codes_sorted[start]:
+                end += 1
+            code = str(codes_sorted[start])
+            idx = order[start:end]
+            block_days = days_sorted[start:end]
+
+            for lifecycle in self._by_code.get(code, ()):
+                mask = block_days >= np.datetime64(lifecycle.listed_on, "D")
+                if lifecycle.delisted_on is not None:
+                    mask &= block_days < np.datetime64(lifecycle.delisted_on, "D")
+                if not mask.any():
+                    continue
+                sel = block_days[mask]
+                tgt = idx[mask]
+                listed[tgt] = np.datetime64(lifecycle.listed_on, "D")
+
+                if lifecycle.boards:
+                    dates = np.asarray([np.datetime64(item[0], "D") for item in lifecycle.boards])
+                    values = np.asarray([item[2] for item in lifecycle.boards], dtype=object)
+                    pos = np.searchsorted(dates, sel, side="right") - 1
+                    picked = np.where(pos >= 0, values[np.clip(pos, 0, None)], lifecycle.listing_board)
+                    board[tgt] = picked
+                else:
+                    board[tgt] = lifecycle.listing_board
+
+                if lifecycle.st_events:
+                    st_dates = np.asarray([np.datetime64(item[0], "D") for item in lifecycle.st_events])
+                    st_values = np.asarray([item[2] for item in lifecycle.st_events], dtype=bool)
+                    st_index = np.asarray([item[1] for item in lifecycle.st_events])
+                    st_pos = np.searchsorted(st_dates, sel, side="right") - 1
+                    is_st[tgt] = np.where(st_pos >= 0, st_values[np.clip(st_pos, 0, None)], False)
+                    picked_status = np.where(
+                        st_pos >= 0,
+                        np.where(
+                            np.isin(st_index[np.clip(st_pos, 0, None)], np.asarray(sorted(lifecycle.st_proxy_indexes))),
+                            "proxy",
+                            "known",
+                        ),
+                        "unknown",
+                    )
+                    status[tgt] = picked_status
+                else:
+                    status[tgt] = "unknown"
+            start = end
+
+        return {"board": board, "is_st": is_st, "st_status": status, "listed_on": listed}
+
+    def state_frame(self, codes: Sequence[str], days: Sequence[date]) -> pd.DataFrame:
+        """``state_arrays`` 的 DataFrame 形态（codes × days 笛卡尔积，保留活跃行）。"""
+        code_list: list[str] = []
+        for raw in codes:
+            code = _query_code(raw)
+            if code is not None:
+                code_list.append(code)
+        code_list = sorted(set(code_list))
+        day_list = [_as_date(d) for d in days]
+        if not code_list or not day_list:
+            return pd.DataFrame(
+                columns=["code", "trade_date", "board", "is_st", "st_status", "listed_on", "name", "lot_size", "tick_size"]
+            )
+        grid_codes = np.repeat(code_list, len(day_list))
+        grid_days = np.tile(np.asarray(day_list), len(code_list))
+        arrays = self.state_arrays(grid_codes, grid_days)
+        frame = pd.DataFrame(
+            {
+                "code": grid_codes,
+                "trade_date": pd.to_datetime(grid_days.astype("datetime64[ns]")),
+                "board": arrays["board"],
+                "is_st": arrays["is_st"],
+                "st_status": arrays["st_status"],
+                "listed_on": pd.to_datetime(arrays["listed_on"]),
+            }
+        )
+        return frame.loc[frame["listed_on"].notna()].reset_index(drop=True)
 
     def listable(self, as_of: date) -> set[str]:
         """返回 ``as_of`` 当天存续（未退市）的全部代码。"""

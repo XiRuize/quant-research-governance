@@ -30,6 +30,8 @@ RULE_HIGH_SUSPENSION = "GRID.high_suspension_rate"
 RULE_ST_UNKNOWN = "GRID.st_unknown"
 RULE_LIMIT_AMBIGUOUS = "GRID.limit_ambiguous"
 RULE_ST_PROXY = "GRID.st_proxy"
+RULE_NO_LIMIT = "GRID.no_limit_days"
+RULE_SUSPENDED_ANNOUNCED = "GRID.suspension_announced"
 RULE_PANEL_CODE_MISSING = "GRID.panel_code_missing"
 RULE_COVERAGE_GAP = "GRID.master_coverage_gap"
 RULE_LOW_DAILY_COVERAGE = "GRID.low_daily_coverage"
@@ -38,6 +40,30 @@ RULE_LOW_DAILY_COVERAGE = "GRID.low_daily_coverage"
 def _round_to_cent(values: np.ndarray) -> np.ndarray:
     """四舍五入到分（A 股涨跌停价规则；numpy round 是银行家舍入，不能用）。"""
     return np.floor(np.asarray(values, dtype="float64") * 100.0 + 0.5) / 100.0
+
+
+def _interval_mask(
+    frame: pd.DataFrame,
+    intervals: pd.DataFrame,
+    start_col: str,
+    end_col: str,
+) -> np.ndarray:
+    """code × [start, end] 区间命中掩码（闭区间）。"""
+    iv = intervals.loc[:, ["code", start_col, end_col]].copy()
+    iv["code"] = iv["code"].astype(str).str.zfill(6)
+    iv[start_col] = pd.to_datetime(iv[start_col], errors="coerce").astype("datetime64[ns]")
+    iv[end_col] = pd.to_datetime(iv[end_col], errors="coerce").astype("datetime64[ns]")
+    iv = iv.dropna(subset=[start_col, end_col])
+    if iv.empty:
+        return np.zeros(len(frame), dtype=bool)
+    tmp = frame.loc[:, ["code", "trade_date"]].merge(iv, on="code", how="inner")
+    hit = tmp.loc[
+        (tmp["trade_date"] >= tmp[start_col]) & (tmp["trade_date"] <= tmp[end_col]),
+        ["code", "trade_date"],
+    ].drop_duplicates()
+    hit["_hit"] = True
+    marker = frame.loc[:, ["code", "trade_date"]].merge(hit, on=["code", "trade_date"], how="left")
+    return marker["_hit"].fillna(False).to_numpy(dtype=bool)
 
 
 def build_grid(
@@ -49,6 +75,8 @@ def build_grid(
     end: date,
     spec: PanelSpec | None = None,
     suspension_rate_warn: float = 0.5,
+    no_limit: pd.DataFrame | None = None,
+    suspensions: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, AuditReport]:
     """返回 (flags 面板, 审计报告)，不回写原 panel。"""
     sessions = [s.day for s in calendar.sessions(start, end)]
@@ -105,43 +133,85 @@ def build_grid(
     close_ffill = merged.groupby("code", observed=True)["close"].ffill()
     merged["prev_close"] = close_ffill.groupby(merged["code"], observed=True).shift(1)
 
-    pct: list[float] = []
-    st_pct: list[float] = []
-    st_flags: list[bool] = []
-    st_unknown: list[bool] = []
-    st_proxy: list[bool] = []
-    new_flags: list[bool] = []
-    for ts, code in zip(merged["trade_date"], merged["code"]):
-        day = ts.date()
-        state = master.state(code, day)
-        if state is None:
-            pct.append(float("nan"))
-            st_pct.append(float("nan"))
-            st_flags.append(False)
-            st_unknown.append(True)
-            st_proxy.append(False)
-            new_flags.append(False)
-            continue
-        pct.append(float(regime.limit_pct(state, day)))
-        st_flags.append(bool(state.is_st))
-        status = getattr(state, "st_status", "known")
-        unknown = status == "unknown"
-        st_proxy.append(status == "proxy")
-        st_unknown.append(unknown)
-        if unknown:
-            st_state = replace(state, is_st=True)
-            st_pct.append(float(regime.limit_pct(st_state, day)))
-        else:
-            st_pct.append(float("nan"))
-        new_flags.append(bool(regime.is_no_limit(state, day)))
+    # 优先走向量化：state_frame + limit_frame；两者缺一才退回逐行循环
+    use_vector = hasattr(master, "state_arrays") and hasattr(regime, "limit_frame")
+    if use_vector:
+        arrays = master.state_arrays(
+            merged["code"].to_numpy(), merged["trade_date"].dt.date.to_numpy()
+        )
+        merged["board"] = arrays["board"]
+        merged["is_st"] = arrays["is_st"]
+        merged["st_status"] = arrays["st_status"]
+        merged["listed_on"] = pd.to_datetime(arrays["listed_on"])
+        merged["limit_pct"] = regime.limit_frame(merged)
+        merged["is_st"] = merged["is_st"].fillna(False).astype(bool)
+        merged["is_st_unknown"] = merged["st_status"].fillna("unknown").eq("unknown")
+        merged["is_st_proxy"] = merged["st_status"].fillna("unknown").eq("proxy")
+        merged["is_new"] = np.isinf(merged["limit_pct"].to_numpy(dtype="float64"))
 
-    merged["limit_pct"] = pct
-    merged["is_st"] = st_flags
-    merged["is_st_unknown"] = st_unknown
-    merged["is_st_proxy"] = st_proxy
-    merged["is_new"] = new_flags
+        unknown_mask = merged["is_st_unknown"].to_numpy(dtype=bool)
+        st_pct = np.full(len(merged), np.nan)
+        if unknown_mask.any():
+            probe = merged.loc[unknown_mask, ["board", "trade_date", "listed_on"]].copy()
+            probe["is_st"] = True
+            st_pct[unknown_mask] = regime.limit_frame(probe)
+    else:
+        pct: list[float] = []
+        st_pct_list: list[float] = []
+        st_flags: list[bool] = []
+        st_unknown: list[bool] = []
+        st_proxy: list[bool] = []
+        new_flags: list[bool] = []
+        for ts, code in zip(merged["trade_date"], merged["code"]):
+            day = ts.date()
+            state = master.state(code, day)
+            if state is None:
+                pct.append(float("nan"))
+                st_pct_list.append(float("nan"))
+                st_flags.append(False)
+                st_unknown.append(True)
+                st_proxy.append(False)
+                new_flags.append(False)
+                continue
+            pct.append(float(regime.limit_pct(state, day)))
+            st_flags.append(bool(state.is_st))
+            status = getattr(state, "st_status", "known")
+            unknown = status == "unknown"
+            st_proxy.append(status == "proxy")
+            st_unknown.append(unknown)
+            if unknown:
+                st_state = replace(state, is_st=True)
+                st_pct_list.append(float(regime.limit_pct(st_state, day)))
+            else:
+                st_pct_list.append(float("nan"))
+            new_flags.append(bool(regime.is_no_limit(state, day)))
+
+        merged["limit_pct"] = pct
+        merged["is_st"] = st_flags
+        merged["is_st_unknown"] = st_unknown
+        merged["is_st_proxy"] = st_proxy
+        merged["is_new"] = new_flags
+        st_pct = np.asarray(st_pct_list, dtype="float64")
+
     merged["suspended"] = merged["close"].isna()
+    merged["suspension_announced"] = False
+    merged["no_limit"] = False
     merged["listed"] = True
+
+    if suspensions is not None and not suspensions.empty:
+        merged["suspension_announced"] = _interval_mask(merged, suspensions, "start_date", "end_date")
+        merged["suspended"] = merged["suspended"] | merged["suspension_announced"]
+    if no_limit is not None and not no_limit.empty:
+        nl = no_limit.loc[:, ["code", "trade_date"]].copy()
+        nl["code"] = nl["code"].astype(str).str.zfill(6)
+        nl["trade_date"] = pd.to_datetime(nl["trade_date"]).astype("datetime64[ns]")
+        nl = nl.drop_duplicates().assign(_no_limit=True)
+        marker = merged[["code", "trade_date"]].merge(nl, on=["code", "trade_date"], how="left")
+        merged["no_limit"] = marker["_no_limit"].fillna(False).to_numpy(dtype=bool)
+        # 无涨跌幅限制日：幅度记为 inf，不做锁死判定
+        inf_mask = merged["no_limit"].to_numpy(dtype=bool)
+        if inf_mask.any():
+            merged.loc[inf_mask, "limit_pct"] = np.inf
 
     finite = np.isfinite(merged["limit_pct"].to_numpy(dtype="float64")) & merged["prev_close"].notna().to_numpy()
     prev = merged["prev_close"].to_numpy(dtype="float64")
@@ -196,6 +266,8 @@ def build_grid(
             "limit_up_price",
             "limit_down_price",
             "suspended",
+            "suspension_announced",
+            "no_limit",
             "limit_up",
             "limit_down",
             "limit_locked",
@@ -217,6 +289,8 @@ def build_grid(
             "limit_locked": int(flags["limit_locked"].sum()),
             "limit_ambiguous": int(flags["limit_ambiguous"].sum()),
             "st_unknown": int(flags["is_st_unknown"].sum()),
+            "no_limit": int(flags["no_limit"].sum()),
+            "suspension_announced": int(flags["suspension_announced"].sum()),
             "st_proxy": int(flags["is_st_proxy"].sum()),
             "tradable": int(flags["tradable"].sum()),
         }
@@ -251,6 +325,24 @@ def build_grid(
                 sample=tuple(
                     f"{r.trade_date.date()}:{r.code}" for r in flags.loc[flags["limit_ambiguous"], ["trade_date", "code"]].head(5).itertuples()
                 ),
+            )
+        )
+    if int(flags["no_limit"].sum()) > 0:
+        report.add(
+            RuleHit(
+                rule_id=RULE_NO_LIMIT,
+                severity=Severity.INFO,
+                message="no price-limit days from exchange table",
+                row_count=int(flags["no_limit"].sum()),
+            )
+        )
+    if int(flags["suspension_announced"].sum()) > 0:
+        report.add(
+            RuleHit(
+                rule_id=RULE_SUSPENDED_ANNOUNCED,
+                severity=Severity.INFO,
+                message="suspension from exchange records (rows may still exist)",
+                row_count=int(flags["suspension_announced"].sum()),
             )
         )
     if rows and float(flags["suspended"].mean()) > suspension_rate_warn:

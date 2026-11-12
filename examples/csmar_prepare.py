@@ -222,6 +222,26 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    # ---------------------------------------------------------------- 无涨跌幅限制日 / 停复牌
+    nl = pd.read_parquet(csmar / "行情" / "TRD_NoLimit" / "data.parquet")
+    nl["code"] = _code(nl["Symbol"])
+    nl["trade_date"] = pd.to_datetime(nl["TradingDate"])
+    nl = nl.loc[nl["trade_date"].between(start, end) & nl["code"].isin(set(universe))]
+    nl = nl[["code", "trade_date"]].drop_duplicates().sort_values(["trade_date", "code"])
+    nl.to_parquet(out / "no_limit.parquet", index=False)
+
+    ts = pd.read_parquet(csmar / "行情" / "TSR_Stkstat" / "data.parquet")
+    ts["code"] = _code(ts["Stkcd"])
+    ts["start_date"] = pd.to_datetime(ts["Suspdate"], errors="coerce")
+    ts["end_date"] = pd.to_datetime(ts["Resmdate"], errors="coerce")
+    ts = ts.loc[(ts["Type"] == 1) & ts["start_date"].notna()].copy()
+    ts["end_date"] = ts["end_date"].fillna(end + pd.Timedelta(days=1))
+    ts = ts.loc[
+        (ts["start_date"] <= end) & (ts["end_date"] >= start) & ts["code"].isin(set(universe))
+    ]
+    suspensions = ts[["code", "start_date", "end_date"]].drop_duplicates().sort_values(["start_date", "code"])
+    suspensions.to_parquet(out / "suspensions.parquet", index=False)
+
     st_summary = {
         "universe": len(universe),
         "bse_codes": int(sum(1 for c in universe if c.startswith("92"))),
@@ -231,6 +251,8 @@ def main() -> None:
         "st_events_proxy": st_events,
         "st_codes_proxy": len(st_codes),
         "factor_rows": int(len(factors)),
+        "no_limit_rows": int(len(nl)),
+        "suspension_intervals": int(len(suspensions)),
     }
     (out / "st_summary.json").write_text(json.dumps(st_summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(st_summary, ensure_ascii=False))
