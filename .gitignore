@@ -12,3 +12,5 @@ build/
 tests/.tmp/
 tests/_session_artifacts/
 pytest-cache-files-*/
+
+examples/_real/
