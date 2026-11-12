@@ -77,11 +77,11 @@ python -m qrg clean --spec spec/cleaning.spec.json `
 
 | 场景 | 优化前 | 优化后 |
 |---|---|---|
-| 网格（116,755 行） | 2.14s | **1.49s** |
+| 网格（116,755 行，≤2s 目标） | 2.14s | **1.49s** |
 | normalize（116,588 行） | 3.53s | **2.25s** |
 | 端到端（含 lookahead 回放） | ~11s | **9.5s** |
 
-`normalize` 通过“已在 tick 网格上的值跳过 Decimal 往返”降到 2.25s。端到端仍是 9.5s，瓶颈是 `lookahead` 回放（每个交易日重算一次，约 2.8s）与 pandas 分组开销——2s 目标未达成，下一步要优化回放策略。
+`normalize` 通过“已在 tick 网格上的值跳过 Decimal 往返”降到 2.25s。端到端仍是 8.5s，瓶颈是 `lookahead` 回放（每个交易日重算一次，约 3s）。新增 `--replay-step` 抽样（step=5 时端到端 5.7s），但抽样式审计弱于全量回放，默认仍是 1。\n\n向量路径与逐行路径的一致性由 `tests/test_grid_equivalence.py` 保证（同输入逐值相等）。
 
 ### 无涨跌幅限制日（TRD_NoLimit）
 

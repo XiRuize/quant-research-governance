@@ -186,6 +186,15 @@ def _parse_numeric(series: pd.Series) -> tuple[pd.Series, int, int]:
         非空但无法解析 / 为 inf 的行数。
     """
     values = series.tolist()
+    if pd.api.types.is_numeric_dtype(series):
+        parsed = series.astype("Float64")
+        arr = series.to_numpy(dtype="float64", na_value=np.nan)
+        present = ~np.isnan(arr)
+        nonfinite = present & ~np.isfinite(arr)
+        if nonfinite.any():
+            parsed = parsed.mask(nonfinite, pd.NA)
+        return parsed, 0, int(nonfinite.sum())
+
     present = [not _is_missing(v) for v in values]
     cleaned: list[Any] = []
     for value, is_present in zip(values, present):
@@ -368,13 +377,26 @@ def _normalize_columns(df: pd.DataFrame, report: AuditReport) -> tuple[pd.DataFr
 
 def _replace_null_tokens(df: pd.DataFrame, report: AuditReport) -> pd.DataFrame:
     for column in df.columns:
-        values = df[column].tolist()
-        mask = [_is_null_token(v) for v in values]
-        count = sum(mask)
+        s = df[column]
+        # 数值/时间/布尔列不可能含字符串空值令牌，直接跳过（真实行情表大多走这里）
+        if (
+            pd.api.types.is_numeric_dtype(s)
+            or pd.api.types.is_datetime64_any_dtype(s)
+            or pd.api.types.is_bool_dtype(s)
+        ):
+            continue
+        as_str = s.astype("string")
+        mask = as_str.str.strip().str.lower().isin(NULL_TOKENS).fillna(False)
+        # 字面量 None 也算空值令牌；pd.NA/NaN 已经是缺失，不重复计数（保证幂等）
+        na_mask = s.isna()
+        if bool(na_mask.any()):
+            # pandas 会把 None 规整成 NaN；pd.NA/NaT 视为已规范化，避免二次计数
+            raw_missing = na_mask & s.map(lambda v: not (v is pd.NA or v is pd.NaT))
+            mask = mask | raw_missing.fillna(False).astype(bool)
+        count = int(mask.sum())
         if not count:
             continue
-        replaced = [pd.NA if flag else value for value, flag in zip(values, mask)]
-        df[column] = pd.Series(replaced, index=df.index, dtype=object)
+        df[column] = s.astype(object).mask(mask, pd.NA)
         _add_hit(
             report,
             "F7.null_tokens",

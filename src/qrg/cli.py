@@ -140,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--scan", help="静态未来函数扫描目录/文件")
     clean.add_argument("--no-limit", help="无涨跌幅限制日表 (code,trade_date)")
     clean.add_argument("--suspensions", help="停复牌区间表 (code,start_date,end_date)")
+    clean.add_argument("--replay-step", type=int, default=1, help="回放审计抽样步长（1=每个交易日）")
 
     gate = sub.add_parser("gate", help="校验产物 hash 与 provenance")
     gate.add_argument("--dir", required=True, help="clean 的产物目录")
@@ -267,7 +268,11 @@ def cmd_clean(args: argparse.Namespace) -> int:
         return out
 
     if {"close", "trade_date", "code"}.issubset(panel.columns):
-        reports.append(lookahead(panel, _ret, feature_cols=["ret"]))  # type: ignore[operator]
+        replay_dates = None
+        if args.replay_step and args.replay_step > 1:
+            all_days = sorted(pd.to_datetime(panel["trade_date"]).dt.date.unique())
+            replay_dates = all_days[:: args.replay_step]
+        reports.append(lookahead(panel, _ret, dates=replay_dates, feature_cols=["ret"]))  # type: ignore[operator]
         steps.append("lookahead")
 
     if args.scan:

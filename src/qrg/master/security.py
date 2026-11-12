@@ -566,7 +566,9 @@ class SecurityMasterImpl:
         返回 board / is_st / st_status / listed_on 四个等长数组。
         """
         codes_arr = np.asarray([str(c) for c in codes], dtype=object)
-        day_arr = np.asarray([_as_date(d) for d in days], dtype="datetime64[D]")
+        day_arr = np.asarray(days)
+        if day_arr.dtype != np.dtype("datetime64[D]"):
+            day_arr = np.asarray([_as_date(d) for d in days], dtype="datetime64[D]")
         n = int(codes_arr.size)
         board = np.full(n, "", dtype=object)
         is_st = np.zeros(n, dtype=bool)

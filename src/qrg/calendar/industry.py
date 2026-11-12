@@ -30,6 +30,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -421,6 +423,43 @@ class IndustryCalendarImpl:
         raise SpecError(f"industry rules file not found; searched: {searched}")
 
     # ------------------------------------------------------------ 查询
+
+    def classify_arrays(self, codes: Sequence[str], days: Sequence[Any]) -> dict[str, np.ndarray]:
+        """逐对 (code, day) 的向量化 as-of 查询，避免 PIT 阶段逐行调用。"""
+        codes_arr = np.asarray([str(c) for c in codes], dtype=object)
+        day_arr = np.asarray(days, dtype="datetime64[D]") if not isinstance(days, np.ndarray) else days
+        if day_arr.dtype != np.dtype("datetime64[D]"):
+            day_arr = day_arr.astype("datetime64[D]")
+        n = int(codes_arr.size)
+        out_code = np.full(n, "UNKNOWN", dtype=object)
+        out_name = np.full(n, "", dtype=object)
+        out_version = np.full(n, "", dtype=object)
+        if n == 0:
+            return {"industry_code": out_code, "industry_name": out_name, "industry_version": out_version}
+
+        order = np.argsort(codes_arr, kind="stable")
+        sorted_codes = codes_arr[order]
+        sorted_days = day_arr[order]
+        start = 0
+        while start < n:
+            end = start + 1
+            while end < n and sorted_codes[end] == sorted_codes[start]:
+                end += 1
+            code = str(sorted_codes[start])
+            idx = order[start:end]
+            block_days = sorted_days[start:end]
+            records = self._by_code.get(code, ())
+            for record in sorted(records, key=lambda r: r.effective_from):
+                mask = block_days >= np.datetime64(record.effective_from, "D")
+                if record.effective_to is not None:
+                    mask &= block_days < np.datetime64(record.effective_to, "D")
+                if not mask.any():
+                    continue
+                out_code[idx[mask]] = record.industry_code
+                out_name[idx[mask]] = record.industry_name
+                out_version[idx[mask]] = record.version
+            start = end
+        return {"industry_code": out_code, "industry_name": out_name, "industry_version": out_version}
 
     def classify(self, code: str, as_of: date) -> IndustryNode | None:
         """返回股票 ``code`` 在 ``as_of`` 当天的行业归属；查不到返回 ``None``。

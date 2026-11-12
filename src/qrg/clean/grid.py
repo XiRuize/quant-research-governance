@@ -137,7 +137,7 @@ def build_grid(
     use_vector = hasattr(master, "state_arrays") and hasattr(regime, "limit_frame")
     if use_vector:
         arrays = master.state_arrays(
-            merged["code"].to_numpy(), merged["trade_date"].dt.date.to_numpy()
+            merged["code"].to_numpy(), merged["trade_date"].to_numpy(dtype="datetime64[D]")
         )
         merged["board"] = arrays["board"]
         merged["is_st"] = arrays["is_st"]
