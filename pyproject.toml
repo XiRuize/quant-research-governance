@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
 name = "qrg"
-version = "0.1.0"
+version = "0.2.0"
 description = "Quant research data cleaning & governance standard library"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,3 +27,4 @@ packages = ["src/qrg"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+

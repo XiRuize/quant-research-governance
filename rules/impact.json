@@ -1,0 +1,8 @@
+{
+  "model": "sqrt",
+  "coef_bps": 10.0,
+  "exponent": 0.5,
+  "status": "uncalibrated",
+  "note": "impact_bps = coef_bps * participation^exponent * sigma；coef 需用真实成交校准，未校准前对外结论必须标 uncalibrated。",
+  "source": "literature-default"
+}

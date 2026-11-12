@@ -1,4 +1,4 @@
-# qrg — 量化研究数据清洗/治理标准库
+﻿# qrg — 量化研究数据清洗/治理标准库
 
 > Quant Research Governance. 目标不是“再写一套清洗脚本”，而是把**口径、规则、产物、证据**固化成可复用、可审计、可复现的标准库。
 
@@ -13,15 +13,17 @@
 
 实际事故绝大多数不来自缺失值，而来自**实体、时间、事件、标签**：代码复用把两家公司拼成一条序列、调休日缺 bar、送转没进事件表、标签跨过了停牌与涨跌停。
 
-## v0.1 范围
+## v0.2 范围
 
-13 个模块：
+21 个模块：
 
 | 层 | 模块 |
 |---|---|
 | A 总览 | 契约与规范（spec schema / 版本化） |
 | F 主数据 | 证券主数据、交易日历与会话、公司行动、规范化 |
 | B 清洗 | 硬校验、复权、制度日历、行业日历、网格与可交易标志、PIT、零前视审计、四件套产物 |
+| C 执行与成本 | 成交模拟、滑点判定、费用科目、冲击模型、逐笔归因 |
+| E 治理 | 门禁、trial registry、provenance |
 
 ## 结构
 
@@ -40,6 +42,7 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 $env:PYTHONPATH = "src"
 python -m pytest -q
 python -m qrg version
+python -m qrg clean --spec spec/cleaning.spec.json --input panel.parquet --out runs/demo
 ```
 
 ## 三条硬规则
@@ -50,8 +53,9 @@ python -m qrg version
 
 ## 状态
 
-v0.1 开发中。模块就绪情况见 `python -m qrg stages`。
+v0.2：清洗 + 执行成本 + 治理三层可端到端运行（21 模块、199 用例）。模块就绪情况见 `python -m qrg stages`。
 
 ## License
 
 MIT
+

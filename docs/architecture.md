@@ -30,7 +30,7 @@ spec ─┬─> normalize ─> validate ─┬─> adjust ─┐
 4. **产物确定性**：不写时间戳、不依赖行序，manifest 记录 sha256；篡改可检出。
 5. **前视双检**：截断回放（动态）+ 静态扫描（源码），违反即 BLOCKED。
 
-## 模块状态（v0.1）
+## 模块状态（v0.2）
 
 | 模块 | 文件 | 状态 |
 |---|---|---|
@@ -47,3 +47,20 @@ spec ─┬─> normalize ─> validate ─┬─> adjust ─┐
 | B4 PIT | `src/qrg/clean/pit.py` | ✅ |
 | B8 零前视 | `src/qrg/clean/lookahead.py` | ✅ |
 | B5 四件套 | `src/qrg/clean/artifacts.py` | ✅ |
+| C4 成交模拟 | `src/qrg/exec/simulator.py` | ✅ |
+| C5 滑点判定 | `src/qrg/exec/slippage.py` | ✅ |
+| C1 费用科目 | `src/qrg/cost/fees.py` | ✅ |
+| C2 冲击模型 | `src/qrg/cost/impact.py` | ✅ |
+| C3 逐笔归因 | `src/qrg/cost/attribution.py` | ✅ |
+| E1 门禁 | `src/qrg/gov/gate.py` | ✅ |
+| E2 trial registry | `src/qrg/gov/registry.py` | ✅ |
+| E3 provenance | `src/qrg/gov/provenance.py` | ✅ |
+
+## v0.2 新增的 CLI
+
+```text
+qrg simulate --orders orders.csv --flags flags.parquet --panel panel.parquet --out sim/
+qrg cost     --fills fills.csv --slippage slip.csv --out cost/
+```
+
+`clean` 现在额外产出 `gate.json`（pass/warn/blocked）与 `provenance.json`（spec 版本 + 规则哈希 + 配置指纹 + 产物清单）。

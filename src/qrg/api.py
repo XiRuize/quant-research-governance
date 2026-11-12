@@ -9,7 +9,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import date, time
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Any, Iterable, Mapping, Protocol, Sequence, runtime_checkable
 
 import pandas as pd
@@ -282,3 +282,72 @@ class PanelSpec:
     def load(cls, path: str) -> "PanelSpec":
         with open(path, encoding="utf-8") as fh:
             return cls.from_dict(json.load(fh))
+
+
+# ---------------------------------------------------------------- 执行与成本
+
+
+class Side(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
+
+
+#: 未成交/部分成交原因码；任何 fill 必须带其一，禁止静默丢单。
+UNFILLED_REASONS: frozenset[str] = frozenset(
+    {
+        "filled",
+        "partial",
+        "suspended",
+        "limit_locked",
+        "t_plus_1",
+        "participation_cap",
+        "no_price",
+        "no_liquidity",
+    }
+)
+
+
+@dataclass(frozen=True)
+class Order:
+    """一个下单意图；ref_price 是到达价（arrival price）基准。"""
+
+    trade_date: date
+    code: str
+    side: Side
+    qty: float
+    ref_price: float
+    order_id: str = ""
+
+    def with_qty(self, qty: float, order_id: str | None = None) -> "Order":
+        return Order(self.trade_date, self.code, self.side, qty, self.ref_price, order_id or self.order_id)
+
+
+@dataclass(frozen=True)
+class Fill:
+    order_id: str
+    trade_date: date
+    code: str
+    side: Side
+    qty: float
+    price: float
+    fee: float = 0.0
+    reason: str = "filled"
+
+    @property
+    def notional(self) -> float:
+        return self.qty * self.price
+
+
+@dataclass(frozen=True)
+class SlippageBreakdown:
+    """成交价相对 arrival price 的偏离分解；residual 为无法解释部分。"""
+
+    impact: float = 0.0
+    delay: float = 0.0
+    spread: float = 0.0
+    overnight: float = 0.0
+    residual: float = 0.0
+
+    @property
+    def total(self) -> float:
+        return self.impact + self.delay + self.spread + self.overnight + self.residual

@@ -1,7 +1,13 @@
 """qrg command line.
 
 阶段约定（按依赖顺序）：
-    normalize -> validate -> adjust -> grid -> pit -> lookahead -> artifacts
+    normalize -> validate -> adjust -> grid -> pit -> lookahead -> artifacts -> gate -> provenance
+
+子命令：
+    clean     按契约执行清洗管线
+    simulate  成交模拟（orders + flags + panel -> fills）
+    cost      成本归因（fills (+ slippage) -> attribution）
+    stages    查看管线就绪状态
 
 退出码：0 通过；2 管线不完整；3 被门禁拦截；4 输入/契约错误。
 """
@@ -27,6 +33,8 @@ PIPELINE_ORDER: tuple[str, ...] = (
     "lookahead",
     "artifacts",
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _stage(name: str) -> Callable[..., object] | None:
@@ -74,6 +82,13 @@ def read_table(path: str | Path) -> pd.DataFrame:
     raise ValueError(f"unsupported table suffix: {p.suffix}")
 
 
+def _write_json(path: str | Path, payload: Any) -> Path:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return p
+
+
 def _fallback_master(panel: pd.DataFrame) -> Any:
     from .master.security import SecurityMasterImpl
 
@@ -119,7 +134,24 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--security-rules", help="证券主数据规则 json")
     clean.add_argument("--sessions", help="交易日列表 csv/parquet")
     clean.add_argument("--regime-rules", help="制度日历规则 json")
+    clean.add_argument("--rules-dir", default=str(REPO_ROOT / "rules"), help="规则目录（provenance 哈希用）")
+    clean.add_argument("--run-id", help="运行 id；缺省由产物 hash 派生")
     clean.add_argument("--scan", help="静态未来函数扫描目录/文件")
+
+    simulate = sub.add_parser("simulate", help="成交模拟")
+    simulate.add_argument("--orders", required=True, help="orders csv: order_id,trade_date,code,side,qty,ref_price")
+    simulate.add_argument("--flags", required=True, help="build_grid 产出的 flags parquet")
+    simulate.add_argument("--panel", required=True, help="行情 parquet/csv（volume/amount）")
+    simulate.add_argument("--out", required=True)
+    simulate.add_argument("--participation-cap", type=float, default=0.1)
+    simulate.add_argument("--price-basis", choices=["vwap", "close"], default="vwap")
+    simulate.add_argument("--allow-t0", action="store_true", help="关闭 T+1 限制（默认开启）")
+
+    cost = sub.add_parser("cost", help="成本归因")
+    cost.add_argument("--fills", required=True, help="fills csv: order_id,trade_date,code,side,qty,price")
+    cost.add_argument("--slippage", help="slippage csv（order_id,impact_bps,delay_bps,spread_bps,overnight_bps,residual_bps）")
+    cost.add_argument("--out", required=True)
+    cost.add_argument("--regime-rules", help="制度日历规则 json")
     return parser
 
 
@@ -167,7 +199,10 @@ def cmd_clean(args: argparse.Namespace) -> int:
     if args.sessions:
         from .calendar.session import SessionCalendar
 
-        calendar = SessionCalendar.from_parquet(args.sessions) if args.sessions.endswith(".parquet") else SessionCalendar.from_csv(args.sessions)
+        if args.sessions.endswith(".parquet"):
+            calendar = SessionCalendar.from_parquet(args.sessions)
+        else:
+            calendar = SessionCalendar.from_csv(args.sessions)
     else:
         calendar = _fallback_calendar(panel)
 
@@ -220,8 +255,27 @@ def cmd_clean(args: argparse.Namespace) -> int:
         sensitivity={"steps": steps, "rows": int(len(panel))},
     )
 
+    from .gov.gate import decide, write_decision
+
+    decision = decide(reports, manifest)
+    write_decision(args.out, decision)
+
+    from .gov.provenance import collect, write_record
+
+    run_id = args.run_id or f"run-{manifest['data_quality_report.json'].split(':')[-1][:12]}"
+    record = collect(
+        run_id,
+        spec.spec_version,
+        args.rules_dir,
+        manifest,
+        {"steps": steps, "rows": int(len(panel))},
+    )
+    write_record(args.out, record)
+
     summary = {
-        "ok": all(r.ok for r in reports),
+        "ok": decision.status != "blocked",
+        "gate": decision.status,
+        "run_id": run_id,
         "spec_version": spec.spec_version,
         "steps": steps,
         "rows": int(len(panel)),
@@ -239,11 +293,108 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_orders(path: str) -> list[Any]:
+    from .api import Order, Side
+
+    df = read_table(path)
+    required = {"order_id", "trade_date", "code", "side", "qty", "ref_price"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"orders missing columns: {sorted(missing)}")
+    orders = []
+    for row in df.itertuples(index=False):
+        orders.append(
+            Order(
+                trade_date=pd.Timestamp(row.trade_date).date(),
+                code=str(row.code),
+                side=Side(str(row.side)),
+                qty=float(row.qty),
+                ref_price=float(row.ref_price),
+                order_id=str(row.order_id),
+            )
+        )
+    return orders
+
+
+def cmd_simulate(args: argparse.Namespace) -> int:
+    from .api import SpecError
+    from .exec.simulator import simulate
+
+    try:
+        orders = _read_orders(args.orders)
+        flags = read_table(args.flags)
+        panel = read_table(args.panel)
+    except (SpecError, ValueError, OSError) as exc:
+        print(f"input error: {exc}", file=sys.stderr)
+        return 4
+
+    fills, report = simulate(
+        orders,
+        flags,
+        panel,
+        price_basis=args.price_basis,
+        participation_cap=args.participation_cap,
+        t_plus_1=not args.allow_t0,
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame([f.__dict__ for f in fills])
+    if "side" in frame.columns:
+        frame["side"] = frame["side"].astype(str)
+    frame.to_parquet(out / "fills.parquet", index=False)
+    _write_json(out / "exec_report.json", report.to_dict())
+    print(json.dumps({"ok": report.ok, "fills": len(fills), "report": report.to_dict()}, ensure_ascii=False, indent=2))
+    return 0 if report.ok else 3
+
+
+def cmd_cost(args: argparse.Namespace) -> int:
+    from .api import Fill, Side
+    from .calendar.regime import RegimeCalendar
+    from .cost.attribution import aggregate, attribute_fills
+
+    try:
+        df = read_table(args.fills)
+        required = {"order_id", "trade_date", "code", "side", "qty", "price"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"fills missing columns: {sorted(missing)}")
+        fills = [
+            Fill(
+                order_id=str(r.order_id),
+                trade_date=pd.Timestamp(r.trade_date).date(),
+                code=str(r.code),
+                side=Side(str(r.side)),
+                qty=float(r.qty),
+                price=float(r.price),
+            )
+            for r in df.itertuples(index=False)
+        ]
+        slippage = read_table(args.slippage) if args.slippage else None
+    except (ValueError, OSError) as exc:
+        print(f"input error: {exc}", file=sys.stderr)
+        return 4
+
+    regime = RegimeCalendar(path=args.regime_rules) if args.regime_rules else RegimeCalendar()
+    frame, report = attribute_fills(fills, regime, slippage)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(out / "attribution.parquet", index=False)
+    if not frame.empty:
+        aggregate(frame, ("trade_date",)).to_parquet(out / "attribution_daily.parquet", index=False)
+    _write_json(out / "cost_report.json", report.to_dict())
+    print(json.dumps({"ok": report.ok, "fills": len(fills), "total_cost": float(frame["total_cost"].sum()) if not frame.empty else 0.0}, ensure_ascii=False, indent=2))
+    return 0 if report.ok else 3
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "clean":
         return cmd_clean(args)
+    if args.command == "simulate":
+        return cmd_simulate(args)
+    if args.command == "cost":
+        return cmd_cost(args)
     return int(args.func(args))
 
 
