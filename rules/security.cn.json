@@ -1,0 +1,82 @@
+{
+  "spec_version": "1.0",
+  "dataset": "synthetic-demo",
+  "notes": [
+    "事件表只追加，排序键为 (effective_date, 文件内行号)；同一批输入永远得到同一结果。",
+    "事件在 effective_date 当天生效：listed 当天可见，delisted 当天不可见，st_on/st_off 当天生效。",
+    "600001 的重新上市段为演示代码复用行为而构造（dataset=synthetic-demo），不是真实历史数据。",
+    "lot_size 优先级：code_overrides > listed payload > board_overrides > defaults；tick_size 同理（payload 用 listed 事件）。"
+  ],
+  "defaults": {
+    "lot_size": 100,
+    "tick_size": 0.01
+  },
+  "board_overrides": {
+    "star": {
+      "lot_size": 200
+    }
+  },
+  "board_prefixes": {
+    "main": ["60", "00"],
+    "star": ["68"],
+    "chinext": ["30"],
+    "bse": ["8", "4", "920"]
+  },
+  "code_overrides": {},
+  "events": [
+    {
+      "code": "600001",
+      "event": "listed",
+      "effective_date": "1998-01-22",
+      "payload": {"name": "邯郸钢铁", "board": "main"}
+    },
+    {
+      "code": "600001",
+      "event": "st_on",
+      "effective_date": "2006-04-28",
+      "payload": {"reason": "synthetic-demo"}
+    },
+    {
+      "code": "600001",
+      "event": "st_off",
+      "effective_date": "2007-05-14",
+      "payload": {"reason": "synthetic-demo"}
+    },
+    {
+      "code": "600001",
+      "event": "delisted",
+      "effective_date": "2009-12-29",
+      "payload": {"reason": "synthetic-demo"}
+    },
+    {
+      "code": "600001",
+      "event": "listed",
+      "effective_date": "2015-06-01",
+      "payload": {"name": "示例股份", "board": "main", "reason": "synthetic-demo"}
+    },
+    {
+      "code": "600519",
+      "event": "listed",
+      "effective_date": "2001-08-27",
+      "payload": {"name": "贵州茅台", "board": "main"}
+    },
+    {
+      "code": "300750",
+      "event": "listed",
+      "effective_date": "2018-06-11",
+      "payload": {"name": "宁德时代", "board": "chinext"}
+    },
+    {
+      "code": "688981",
+      "event": "listed",
+      "effective_date": "2020-07-16",
+      "payload": {"name": "中芯国际", "board": "star"}
+    },
+    {
+      "code": "830799",
+      "event": "listed",
+      "effective_date": "2020-07-27",
+      "payload": {"name": "艾融软件", "board": "bse"}
+    }
+  ]
+}

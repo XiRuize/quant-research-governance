@@ -1,0 +1,126 @@
+{
+  "spec_version": "1.0",
+  "dataset": "synthetic-demo",
+  "notes": [
+    "分类版本窗口与成分事件均为 [effective_from, effective_to)，切换日当天生效新版本。",
+    "dataset=synthetic-demo：股票与行业对应关系仅用于演示 as-of 行为，不是真实历史成分。",
+    "停用行业代码单独登记在 discontinued_industries，供审计使用；股票归属只由 events 决定。",
+    "同一股票代码的事件区间不得重叠；重叠会在载入时抛 SpecError。",
+    "effective_to 为 null 表示该记录仍然有效。"
+  ],
+  "versions": [
+    {
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13"
+    },
+    {
+      "version": "SW2021",
+      "effective_from": "2021-12-13",
+      "effective_to": null
+    }
+  ],
+  "events": [
+    {
+      "code": "600001",
+      "industry_code": "801010",
+      "industry_name": "农林牧渔",
+      "level": 1,
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13"
+    },
+    {
+      "code": "600001",
+      "industry_code": "801010",
+      "industry_name": "农林牧渔",
+      "level": 1,
+      "version": "SW2021",
+      "effective_from": "2021-12-13",
+      "effective_to": null
+    },
+    {
+      "code": "600519",
+      "industry_code": "801120",
+      "industry_name": "食品饮料",
+      "level": 1,
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13"
+    },
+    {
+      "code": "600519",
+      "industry_code": "801120",
+      "industry_name": "食品饮料",
+      "level": 1,
+      "version": "SW2021",
+      "effective_from": "2021-12-13",
+      "effective_to": null
+    },
+    {
+      "code": "300750",
+      "industry_code": "801731",
+      "industry_name": "电气设备",
+      "level": 1,
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13"
+    },
+    {
+      "code": "300750",
+      "industry_code": "801730",
+      "industry_name": "电力设备",
+      "level": 1,
+      "version": "SW2021",
+      "effective_from": "2021-12-13",
+      "effective_to": null
+    },
+    {
+      "code": "688981",
+      "industry_code": "801080",
+      "industry_name": "电子",
+      "level": 1,
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13"
+    },
+    {
+      "code": "688981",
+      "industry_code": "801080",
+      "industry_name": "电子",
+      "level": 1,
+      "version": "SW2021",
+      "effective_from": "2021-12-13",
+      "effective_to": null
+    },
+    {
+      "code": "830799",
+      "industry_code": "801750",
+      "industry_name": "计算机",
+      "level": 1,
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13"
+    },
+    {
+      "code": "830799",
+      "industry_code": "801750",
+      "industry_name": "计算机",
+      "level": 1,
+      "version": "SW2021",
+      "effective_from": "2021-12-13",
+      "effective_to": null
+    }
+  ],
+  "discontinued_industries": [
+    {
+      "industry_code": "801731",
+      "industry_name": "电气设备",
+      "level": 1,
+      "version": "SW2014",
+      "effective_from": "2014-01-01",
+      "effective_to": "2021-12-13",
+      "reason": "SW2021 起停用该行业代码（dataset=synthetic-demo）"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "spec_version": "0.1.0",
+  "dataset": "synthetic-demo",
+  "factor_definition": "F_t = product(multiplier(event) for ex_date <= t); F = 1 before the first event; close_hfq = close_raw * F; adj(b) = close_raw * F_t / F_b",
+  "event_schema": {
+    "code": "6 位十进制证券代码，字符串",
+    "ex_date": "除权/生效日，ISO 日期 YYYY-MM-DD；当天生效（ex_date <= t 的事件计入 F_t）",
+    "event": "cash_dividend | stock_dividend | rights_issue | split | merge",
+    "payload": "事件参数对象，字段见 event_fields"
+  },
+  "event_fields": {
+    "cash_dividend": {
+      "dividend": "每股税前现金分红（元/股）；10 派 3 元写 0.3",
+      "prev_close": "可选：未提供 prices 时用于近似 1 + dividend / prev_close 的除权前收盘价；与 prices 同时提供时以 prices 为准"
+    },
+    "stock_dividend": {
+      "shares": "每股送股数；10 送 10 写 1.0（不是 10）"
+    },
+    "rights_issue": {
+      "ratio": "每股配股数；10 配 3 写 0.3",
+      "price": "配股价（元/股）；当前口径仅做 1 + ratio 近似，不参与因子计算"
+    },
+    "split": {
+      "ratio": "拆股比例；1 拆 2 写 2.0，1 拆 10 写 10.0"
+    },
+    "merge": {
+      "ratio": "换股比例；1 股换 1.5 股写 1.5"
+    }
+  },
+  "notes": [
+    "本文件是公司行动事件表的 schema 与合成演示数据（dataset=synthetic-demo），不是真实历史数据。",
+    "stock_dividend.shares 是每股送股数：10 送 10 等价于每股送 1 股，写 1.0，因子乘数 = 1 + 1.0 = 2。",
+    "split.ratio 直接作为乘数：1 拆 2 写 2.0，因子乘数 = 2。",
+    "cash_dividend 提供 prices（code/trade_date/close）时使用精确比例 close_prev / (close_prev - dividend)；未提供 prices 但 payload 带 prev_close 时使用近似 1 + dividend / prev_close；两者都没有会抛 SpecError，不会静默按 1 处理。",
+    "rights_issue 按需求使用 1 + ratio 近似，配股价 price 仅保留在事件表中，当前不参与因子计算。",
+    "merge.ratio 直接作为乘数，语义为 1 股旧股换得的新股数/价值比例。",
+    "事件先排序再去重：排序键 (code, ex_date, event, canonical payload)，完全重复的事件只计一次；同一 ex_date 的不同事件按 cash_dividend/stock_dividend/rights_issue/split/merge 顺序稳定计算。",
+    "未提供 prices 时只在 [start, end] 自然日网格上输出比例因子（无交易所日历）；提供 prices 时输出价格交易日与除权日的并集。",
+    "所有输出均为纯离线确定性计算，不访问网络，不调用 LLM。"
+  ],
+  "events": [
+    {
+      "code": "600001",
+      "ex_date": "2024-06-19",
+      "event": "cash_dividend",
+      "payload": {
+        "dividend": 0.1,
+        "prev_close": 5.0
+      }
+    },
+    {
+      "code": "600001",
+      "ex_date": "2024-06-20",
+      "event": "stock_dividend",
+      "payload": {
+        "shares": 0.2
+      }
+    },
+    {
+      "code": "600001",
+      "ex_date": "2025-06-20",
+      "event": "split",
+      "payload": {
+        "ratio": 2.0
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "rows": 6,
+  "spec_version": "0.1.0",
+  "steps": [
+    "adjust",
+    "grid",
+    "pit",
+    "lookahead"
+  ],
+  "thresholds": {
+    "violation_rate_fatal": 0.01,
+    "violation_rate_max": 0.001
+  }
+}

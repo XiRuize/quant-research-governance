@@ -1,0 +1,32 @@
+{
+  "timezone": "Asia/Shanghai",
+  "status": "v0.1-unverified",
+  "note": "涨跌停幅度与费率需按交易所公告逐年核对；source 缺失的规则不得合并。",
+  "limit": [
+    { "board": "main", "pct": 0.10, "effective_from": "1996-12-16", "effective_to": null, "source": "沪深主板" },
+    { "board": "star", "pct": 0.20, "effective_from": "2019-07-22", "effective_to": null, "source": "科创板" },
+    { "board": "chinext", "pct": 0.10, "effective_from": "2009-10-30", "effective_to": "2020-08-23", "source": "创业板旧规" },
+    { "board": "chinext", "pct": 0.20, "effective_from": "2020-08-24", "effective_to": null, "source": "创业板注册制" },
+    { "board": "bse", "pct": 0.30, "effective_from": "2021-11-15", "effective_to": null, "source": "北交所" }
+  ],
+  "st": {
+    "main": { "pct": 0.05, "source": "主板 ST" },
+    "chinext": { "pct": 0.20, "source": "创业板 ST 随板块" },
+    "star": { "pct": 0.20, "source": "科创板 ST 随板块" },
+    "bse": { "pct": 0.30, "source": "北交所 ST 随板块" }
+  },
+  "new_listing": {
+    "no_limit_days": 5,
+    "boards": ["star", "chinext"],
+    "effective_from": "2019-07-22",
+    "note": "注册制新股上市前 5 个交易日无涨跌幅；创业板自 2020-08-24 起。"
+  },
+  "fees": [
+    { "item": "commission", "rate": 0.00025, "side": "both", "min_amount": 5.0, "effective_from": "2002-05-01", "effective_to": null, "source": "券商佣金上限" },
+    { "item": "stamp_duty", "rate": 0.001, "side": "sell", "effective_from": "2008-09-19", "effective_to": "2023-08-27", "source": "印花税单边千一" },
+    { "item": "stamp_duty", "rate": 0.0005, "side": "sell", "effective_from": "2023-08-28", "effective_to": null, "source": "印花税减半" },
+    { "item": "transfer_fee", "rate": 0.00001, "side": "both", "effective_from": "2022-04-29", "effective_to": null, "source": "过户费万零点一" },
+    { "item": "exchange_fee", "rate": 0.0000487, "side": "both", "effective_from": "2022-04-29", "effective_to": null, "source": "经手费" },
+    { "item": "regulatory_fee", "rate": 0.00002, "side": "both", "effective_from": "2022-04-29", "effective_to": null, "source": "证管费" }
+  ]
+}

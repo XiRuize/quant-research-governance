@@ -1,0 +1,47 @@
+{
+  "spec_version": "0.1.0",
+  "timezone": "Asia/Shanghai",
+  "hard_validation": {
+    "rules": [
+      "primary_key_dup",
+      "high_lt_low",
+      "price_le_zero",
+      "negative_volume",
+      "code_not_whitelisted"
+    ],
+    "code_whitelist": ["60", "68", "00", "30", "8", "4", "920"],
+    "violation_rate_max": 0.001,
+    "violation_rate_fatal": 0.01,
+    "on_fail": "L2"
+  },
+  "price_adjustment": {
+    "storage": "raw + daily factor",
+    "factor_definition": "factor = close_hfq / close_raw",
+    "qfq_base_date": "2026-07-31",
+    "any_base_rule": "adj(b) = close_raw * factor / factor[b]",
+    "reproduction_tolerance": 0.001
+  },
+  "missing": {
+    "allow_ffill": false,
+    "grid": "trade_date x listed",
+    "nan_policy": "explicit"
+  },
+  "lookahead": {
+    "require_replay": true,
+    "forbid_negative_shift": true,
+    "forbid_centered_window": true,
+    "financial_anchor": "NOTICE_DATE"
+  },
+  "execution": {
+    "price_basis": "vwap",
+    "fallback": "close",
+    "t_plus": 1,
+    "participation_cap": 0.1
+  },
+  "artifacts": [
+    "data_quality_report.json",
+    "clean_report.json",
+    "trading_flags.parquet",
+    "cleaning_sensitivity.json"
+  ]
+}
