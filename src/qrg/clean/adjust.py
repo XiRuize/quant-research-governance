@@ -25,7 +25,7 @@ def _prepare_factors(factors: pd.DataFrame) -> pd.DataFrame:
         raise SpecError(f"factors missing columns: {missing}")
     f = factors.loc[:, list(FACTOR_COLS)].copy()
     f["code"] = f["code"].astype("string")
-    f["trade_date"] = pd.to_datetime(f["trade_date"])
+    f["trade_date"] = pd.to_datetime(f["trade_date"]).astype("datetime64[ns]")
     f = f.dropna(subset=["factor"])
     f = f.sort_values(["code", "trade_date"]).drop_duplicates(["code", "trade_date"], keep="last")
     bad = f.groupby("code", observed=True)["factor"].diff() < 0
@@ -55,12 +55,12 @@ def adjust_panel(
 
     out = df.copy()
     out["code"] = out["code"].astype("string")
-    out["trade_date"] = pd.to_datetime(out["trade_date"])
+    out["trade_date"] = pd.to_datetime(out["trade_date"]).astype("datetime64[ns]")
     out = out.sort_values(["trade_date", "code"]).reset_index(drop=True)
 
     merged = pd.merge_asof(
         out,
-        f.rename(columns={"factor": "_factor"}),
+        f.sort_values(["trade_date", "code"]).rename(columns={"factor": "_factor"}),
         on="trade_date",
         by="code",
         direction="backward",

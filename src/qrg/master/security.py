@@ -524,6 +524,7 @@ class SecurityMasterImpl:
         if board is None:
             board = lifecycle.listing_board
         is_st = bool(_latest(lifecycle.st_events, day, default=False))
+        st_status = "known" if lifecycle.st_events else "unknown"
 
         return SecurityState(
             code=normalised,
@@ -534,6 +535,7 @@ class SecurityMasterImpl:
             is_st=is_st,
             lot_size=self._lot_size(normalised, board, lifecycle),
             tick_size=self._tick_size(normalised, board, lifecycle),
+            st_status=st_status,
         )
 
     def listable(self, as_of: date) -> set[str]:

@@ -614,9 +614,11 @@ def _build_factor_frame(
         return _finalise_frame(_empty_factor_frame(), events, uses_prices=price_frame is not None)
 
     grid["trade_date"] = pd.to_datetime(grid["trade_date"]).astype("datetime64[ns]")
+    # merge_asof 要求两侧都按 on 键全局有序；只按 code 排序会在多标的时抛
+    # "left keys must be sorted"（真实数据回归发现）。
     grid = (
         grid.drop_duplicates(subset=["code", "trade_date"])
-        .sort_values(["code", "trade_date"], kind="mergesort")
+        .sort_values(["trade_date", "code"], kind="mergesort")
         .reset_index(drop=True)
     )
 
@@ -625,7 +627,7 @@ def _build_factor_frame(
         result = grid
     else:
         points = points.sort_values(
-            ["code", "trade_date"], kind="mergesort"
+            ["trade_date", "code"], kind="mergesort"
         ).reset_index(drop=True)
         result = pd.merge_asof(
             grid,

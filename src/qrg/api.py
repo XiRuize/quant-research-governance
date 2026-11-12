@@ -34,7 +34,9 @@ FLAG_COLUMNS: tuple[str, ...] = (
     "limit_up",
     "limit_down",
     "limit_locked",
+    "limit_ambiguous",
     "is_st",
+    "is_st_unknown",
     "is_new",
     "tradable",
     "listed",
@@ -173,6 +175,7 @@ class SecurityState:
     is_st: bool
     lot_size: int
     tick_size: float
+    st_status: str = "known"  # known / unknown（缺 ST 事件历史时为 unknown）
 
     def exists_on(self, day: date) -> bool:
         if self.listed_on and day < self.listed_on:
