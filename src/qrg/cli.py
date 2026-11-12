@@ -152,6 +152,24 @@ def build_parser() -> argparse.ArgumentParser:
     cost.add_argument("--slippage", help="slippage csv（order_id,impact_bps,delay_bps,spread_bps,overnight_bps,residual_bps）")
     cost.add_argument("--out", required=True)
     cost.add_argument("--regime-rules", help="制度日历规则 json")
+
+    cap = sub.add_parser("capacity", help="容量曲线")
+    cap.add_argument("--weights", required=True, help="weights csv: code,weight")
+    cap.add_argument("--panel", required=True, help="行情 parquet/csv（amount/volume）")
+    cap.add_argument("--out", required=True)
+    cap.add_argument("--gross-alpha-bps", type=float, required=True)
+    cap.add_argument("--turnover", type=float, default=1.0)
+    cap.add_argument("--sigma", type=float, default=1.0)
+    cap.add_argument("--adv-window", type=int, default=20)
+    cap.add_argument("--impact-rules", help="冲击模型规则 json")
+    cap.add_argument("--regime-rules", help="制度日历规则 json")
+
+    tail = sub.add_parser("tail", help="尾部情景")
+    tail.add_argument("--curve", required=True, help="capacity 产出的 curve parquet")
+    tail.add_argument("--out", required=True)
+    tail.add_argument("--scenarios", help="scenarios json（缺省用内置三情景）")
+    tail.add_argument("--impact-rules", help="冲击模型规则 json")
+    tail.add_argument("--returns", help="收益序列 csv，用于 bootstrap 尾部估计")
     return parser
 
 
@@ -386,6 +404,88 @@ def cmd_cost(args: argparse.Namespace) -> int:
     return 0 if report.ok else 3
 
 
+def cmd_capacity(args: argparse.Namespace) -> int:
+    from .capacity.adv import compute_adv
+    from .capacity.curve import capacity_curve
+    from .cost.impact import load_impact
+
+    try:
+        panel = read_table(args.panel)
+        weights_df = read_table(args.weights)
+        missing = {"code", "weight"} - set(weights_df.columns)
+        if missing:
+            raise ValueError(f"weights missing columns: {sorted(missing)}")
+        weights = {str(r.code): float(r.weight) for r in weights_df.itertuples(index=False)}
+    except (ValueError, OSError) as exc:
+        print(f"input error: {exc}", file=sys.stderr)
+        return 4
+
+    window = int(args.adv_window)
+    adv_df, _ = compute_adv(panel, windows=(window,), min_periods=1)
+    adv_col = f"adv_amount_{window}"
+    last = adv_df.sort_values("trade_date").groupby("code", observed=True).tail(1)
+    adv_map = {str(r.code): float(getattr(r, adv_col)) for r in last.itertuples(index=False) if pd.notna(getattr(r, adv_col))}
+
+    from .calendar.regime import RegimeCalendar
+
+    impact = load_impact(args.impact_rules) if args.impact_rules else load_impact()
+    regime = RegimeCalendar(path=args.regime_rules) if args.regime_rules else RegimeCalendar()
+    as_of = pd.to_datetime(panel["trade_date"]).max().date()
+
+    curve, summary = capacity_curve(
+        weights,
+        adv_map,
+        impact,
+        regime,
+        as_of,
+        gross_alpha_bps=args.gross_alpha_bps,
+        turnover=args.turnover,
+        sigma=args.sigma,
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    curve.to_parquet(out / "capacity_curve.parquet", index=False)
+    _write_json(out / "capacity.json", summary)
+    print(json.dumps({"ok": True, "summary": summary}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_tail(args: argparse.Namespace) -> int:
+    from .api import SpecError
+    from .cost.impact import load_impact
+    from .tail.extremes import bootstrap_bands
+    from .tail.scenarios import Scenario, run_scenarios
+
+    try:
+        base = read_table(args.curve)
+        if args.scenarios:
+            payload = json.loads(Path(args.scenarios).read_text(encoding="utf-8"))
+            scenarios = [Scenario(**item) for item in payload]
+        else:
+            scenarios = [
+                Scenario(name="normal"),
+                Scenario(name="stress", vol_multiplier=2.0, adv_multiplier=0.5, seed=1),
+                Scenario(name="illiquid", vol_multiplier=3.0, adv_multiplier=0.2, locked_ratio=0.3, seed=2),
+            ]
+    except (SpecError, ValueError, OSError, TypeError) as exc:
+        print(f"input error: {exc}", file=sys.stderr)
+        return 4
+
+    impact = load_impact(args.impact_rules) if args.impact_rules else load_impact()
+    frame, report = run_scenarios(base, scenarios, impact)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(out / "tail_curves.parquet", index=False)
+    payload = {"report": report.to_dict(), "scenarios": [s.__dict__ for s in scenarios]}
+    if args.returns:
+        returns = read_table(args.returns)
+        col = "ret" if "ret" in returns.columns else returns.columns[-1]
+        payload["bootstrap"] = bootstrap_bands(returns[col].dropna())
+    _write_json(out / "tail.json", payload)
+    print(json.dumps({"ok": report.ok, "scenarios": len(scenarios)}, ensure_ascii=False, indent=2))
+    return 0 if report.ok else 3
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -395,6 +495,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_simulate(args)
     if args.command == "cost":
         return cmd_cost(args)
+    if args.command == "capacity":
+        return cmd_capacity(args)
+    if args.command == "tail":
+        return cmd_tail(args)
     return int(args.func(args))
 
 

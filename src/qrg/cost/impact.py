@@ -1,4 +1,4 @@
-"""冲击模型（C2）：参与率驱动的平方根冲击。
+﻿"""冲击模型（C2）：参与率驱动的平方根冲击。
 
     impact_bps = coef_bps * participation^exponent * sigma
 
@@ -31,12 +31,12 @@ class SqrtImpact:
         if not 0 < self.exponent <= 1:
             raise SpecError("exponent must be in (0, 1]")
 
-    def bps(self, participation: float, sigma: float = 1.0) -> float:
+    def bps(self, participation: float, sigma: float = 1.0, cap: float | None = 1.0) -> float:
         if participation <= 0:
             return 0.0
         if sigma < 0:
             raise SpecError("sigma must be >= 0")
-        p = min(float(participation), 1.0)
+        p = float(participation) if cap is None else min(float(participation), float(cap))
         return float(self.coef_bps) * (p**self.exponent) * float(sigma)
 
     def price(self, ref_price: float, side: Side, participation: float, sigma: float = 1.0) -> float:
@@ -67,3 +67,4 @@ def participation(volume: float, adv: float) -> float:
     if adv is None or adv <= 0:
         return 0.0
     return max(0.0, float(volume) / float(adv))
+

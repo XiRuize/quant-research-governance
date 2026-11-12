@@ -55,6 +55,19 @@ spec ─┬─> normalize ─> validate ─┬─> adjust ─┐
 | E1 门禁 | `src/qrg/gov/gate.py` | ✅ |
 | E2 trial registry | `src/qrg/gov/registry.py` | ✅ |
 | E3 provenance | `src/qrg/gov/provenance.py` | ✅ |
+| D1 ADV/参与率 | `src/qrg/capacity/adv.py` | ✅ |
+| D2 容量曲线 | `src/qrg/capacity/curve.py` | ✅ |
+| D3 尾部情景 | `src/qrg/tail/scenarios.py` | ✅ |
+
+## v0.3 新增的 CLI
+
+```text
+qrg capacity --weights weights.csv --panel panel.parquet --gross-alpha-bps 100 --out cap/
+qrg tail     --curve cap/capacity_curve.parquet --out tail/
+```
+
+`capacity` 输出 `capacity_curve.parquet`（aum/participation/impact_bps/fee_bps/net_bps/feasible）与 `capacity.json`（容量上限 + uncalibrated 标记）；
+`tail` 输出三情景（normal/stress/illiquid）曲线，同情景同种子逐值可复现。
 
 ## v0.2 新增的 CLI
 
