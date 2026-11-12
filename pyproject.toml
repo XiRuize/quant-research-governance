@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qrg"
-version = "0.5.0"
+version = "0.5.1"
 description = "Quant research data cleaning & governance standard library"
 readme = "README.md"
 requires-python = ">=3.11"

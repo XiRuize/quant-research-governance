@@ -78,9 +78,10 @@ python -m qrg clean --spec spec/cleaning.spec.json `
 | 场景 | 优化前 | 优化后 |
 |---|---|---|
 | 网格（116,755 行） | 2.14s | **1.49s** |
-| 端到端（含 normalize/lookahead） | ~11s | ~11s |
+| normalize（116,588 行） | 3.53s | **2.25s** |
+| 端到端（含 lookahead 回放） | ~11s | **9.5s** |
 
-端到端没有明显下降，因为瓶颈已经转移到 `normalize`（约 3.5s）与 `lookahead` 回放（约 2.8s）——下一步要优化这两处，才谈得上“全市场十年”。
+`normalize` 通过“已在 tick 网格上的值跳过 Decimal 往返”降到 2.25s。端到端仍是 9.5s，瓶颈是 `lookahead` 回放（每个交易日重算一次，约 2.8s）与 pandas 分组开销——2s 目标未达成，下一步要优化回放策略。
 
 ### 无涨跌幅限制日（TRD_NoLimit）
 

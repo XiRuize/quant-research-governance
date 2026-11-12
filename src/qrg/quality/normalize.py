@@ -25,6 +25,7 @@ from collections import Counter
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 
+import numpy as np
 import pandas as pd
 
 from ..api import (
@@ -615,22 +616,23 @@ def _apply_units(
 def _round_prices(
     df: pd.DataFrame, tick: float, report: AuditReport
 ) -> pd.DataFrame:
+    quantum = 1.0 / float(tick)
     for column in [c for c in df.columns if c in _PRICE_COLUMNS]:
-        values = df[column].tolist()
-        rounded: list[Any] = []
+        values = pd.to_numeric(df[column], errors="coerce").to_numpy(dtype="float64")
+        missing = np.isnan(values)
+        # 已经落在 tick 网格上的值（绝大多数行情价）不需要 Decimal 往返
+        scaled = values * quantum
+        needs = ~missing & (np.abs(scaled - np.round(scaled)) > 1e-9)
+        rounded = values.copy()
         changed = 0
-        for value in values:
-            if _is_missing(value):
-                rounded.append(pd.NA)
-                continue
-            new_value = _round_half_up(float(value), tick)
-            if math.isnan(new_value):
-                rounded.append(pd.NA)
-                continue
-            if float(value) != new_value:
-                changed += 1
-            rounded.append(new_value)
-        df[column] = _float_series(rounded, df.index)
+        if needs.any():
+            for i in np.flatnonzero(needs):
+                new_value = _round_half_up(float(values[i]), tick)
+                rounded[i] = new_value
+                if not math.isnan(new_value) and float(values[i]) != new_value:
+                    changed += 1
+        rounded[missing] = np.nan
+        df[column] = _float_series(rounded.tolist(), df.index)
         if changed:
             _add_hit(
                 report,
@@ -646,22 +648,13 @@ def _round_prices(
 def _round_volume(df: pd.DataFrame, report: AuditReport) -> pd.DataFrame:
     if "volume" not in df.columns:
         return df
-    values = df["volume"].tolist()
-    rounded: list[Any] = []
-    changed = 0
-    for value in values:
-        if _is_missing(value):
-            rounded.append(pd.NA)
-            continue
-        new_value = _round_half_up(float(value), 1)
-        if math.isnan(new_value):
-            rounded.append(pd.NA)
-            continue
-        integer = int(new_value)
-        if float(value) != float(integer):
-            changed += 1
-        rounded.append(integer)
-    df["volume"] = _int_series(rounded, df.index)
+    values = pd.to_numeric(df["volume"], errors="coerce").to_numpy(dtype="float64")
+    missing = np.isnan(values)
+    rounded = np.rint(values)
+    changed = int((~missing & (values != rounded)).sum())
+    result = rounded.copy()
+    result[missing] = np.nan
+    df["volume"] = _int_series([int(v) if not math.isnan(v) else pd.NA for v in result], df.index)
     if changed:
         _add_hit(
             report,
