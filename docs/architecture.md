@@ -69,6 +69,14 @@ qrg tail     --curve cap/capacity_curve.parquet --out tail/
 `capacity` 输出 `capacity_curve.parquet`（aum/participation/impact_bps/fee_bps/net_bps/feasible）与 `capacity.json`（容量上限 + uncalibrated 标记）；
 `tail` 输出三情景（normal/stress/illiquid）曲线，同情景同种子逐值可复现。
 
+## 口径与假设（v0.3）
+
+- **capacity_aum（D2）**：网格上最大的可行 AUM（net_bps > 0）；网格上限内仍可行则返回网格上界，需自己扩网格。
+- **capacity（D3）**：按 AUM 升序首个 net_bps ≤ 0 的点；曲线单调时与 D2 一致，非单调时以 D3 的定义为准（报告里同时给 meta["scenarios"]）。
+- **locked_ratio**：可交易部分按 (1-locked) 缩放参与率；锁仓部分失去收益暴露、费用仍按全仓计提（保守假设，未校准）。
+- **impact**：`rules/impact.json` 的 coef 为文献默认值，标 `uncalibrated`；对外结论不得当作预测。
+- **fees**：按成交日制度日历逐项计算，未校准券商实际费率。
+
 ## v0.2 新增的 CLI
 
 ```text
