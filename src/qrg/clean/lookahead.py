@@ -36,8 +36,14 @@ def replay_check(
     dates: Sequence[date] | None = None,
     feature_cols: Sequence[str] | None = None,
     tol: float = 0.0,
+    max_dates: int | None = 60,
 ) -> AuditReport:
-    """截断回放：逐日比较全量特征与截断后特征。"""
+    """截断回放：逐日比较全量特征与截断后特征。
+
+    回放是 O(D×N)：十年 × 全市场约 2500 个交易日，全量不可行。
+    默认 ``max_dates=60`` 时按等距抽样，并在 meta 里标 ``sampled=True``；
+    传 ``max_dates=None`` 或显式 ``dates`` 可强制全量。
+    """
     if panel.empty:
         return AuditReport(stage="lookahead", meta={"dates": 0})
     for col in ("trade_date", "code"):
@@ -47,7 +53,17 @@ def replay_check(
     data = panel.copy()
     data["trade_date"] = pd.to_datetime(data["trade_date"])
     all_dates = sorted(data["trade_date"].dt.date.unique())
-    check_dates = list(dates) if dates is not None else all_dates
+    sampled = False
+    if dates is not None:
+        check_dates = list(dates)
+    elif max_dates is not None and len(all_dates) > max_dates:
+        step = max(1, (len(all_dates) + max_dates - 1) // max_dates)
+        check_dates = all_dates[::step]
+        if check_dates[-1] != all_dates[-1]:
+            check_dates.append(all_dates[-1])
+        sampled = True
+    else:
+        check_dates = all_dates
     check_dates = [d for d in check_dates if d in set(all_dates)]
 
     full = compute(data)
@@ -57,7 +73,10 @@ def replay_check(
         ]
     feature_cols = list(feature_cols)
 
-    report = AuditReport(stage="lookahead", meta={"dates": len(check_dates), "features": feature_cols[:20]})
+    report = AuditReport(
+        stage="lookahead",
+        meta={"dates": len(check_dates), "sampled": sampled, "features": feature_cols[:20]},
+    )
     bad_rows = 0
     worst = 0.0
     samples: list[str] = []

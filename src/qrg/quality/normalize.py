@@ -642,18 +642,16 @@ def _round_prices(
     for column in [c for c in df.columns if c in _PRICE_COLUMNS]:
         values = pd.to_numeric(df[column], errors="coerce").to_numpy(dtype="float64")
         missing = np.isnan(values)
-        # 已经落在 tick 网格上的值（绝大多数行情价）不需要 Decimal 往返
         scaled = values * quantum
-        needs = ~missing & (np.abs(scaled - np.round(scaled)) > 1e-9)
-        rounded = values.copy()
-        changed = 0
-        if needs.any():
-            for i in np.flatnonzero(needs):
-                new_value = _round_half_up(float(values[i]), tick)
-                rounded[i] = new_value
-                if not math.isnan(new_value) and float(values[i]) != new_value:
-                    changed += 1
+        floor = np.floor(scaled)
+        frac = scaled - floor
+        # 绝大多数值直接向量化 half-up；只有恰好落在 .5 附近的才走 Decimal（二进制浮点的坑）
+        near_half = np.abs(frac - 0.5) < 1e-9
+        rounded = (floor + (frac >= 0.5)) / quantum
+        for i in np.flatnonzero(near_half & ~missing):
+            rounded[i] = _round_half_up(float(values[i]), tick)
         rounded[missing] = np.nan
+        changed = int(np.sum(~missing & (rounded != values)))
         df[column] = _float_series(rounded.tolist(), df.index)
         if changed:
             _add_hit(

@@ -140,7 +140,8 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--scan", help="静态未来函数扫描目录/文件")
     clean.add_argument("--no-limit", help="无涨跌幅限制日表 (code,trade_date)")
     clean.add_argument("--suspensions", help="停复牌区间表 (code,start_date,end_date)")
-    clean.add_argument("--replay-step", type=int, default=1, help="回放审计抽样步长（1=每个交易日）")
+    clean.add_argument("--partition-year", action="store_true", help="按自然年分区处理以控内存")
+    clean.add_argument("--replay-step", type=int, default=0, help="回放抽样步长：0=自动(≤60日)，1=全量，N=每N日")
 
     gate = sub.add_parser("gate", help="校验产物 hash 与 provenance")
     gate.add_argument("--dir", required=True, help="clean 的产物目录")
@@ -192,34 +193,12 @@ def cmd_clean(args: argparse.Namespace) -> int:
         print(f"input error: {exc}", file=sys.stderr)
         return 4
 
-    reports: list[Any] = []
-    steps: list[str] = []
+    from .pipeline import clean_panel, clean_partitioned
 
-    normalize = _stage("normalize")
-    validate = _stage("validate")
-    adjust = _stage("adjust")
-    grid_stage = _stage("grid")
-    pit = _stage("pit")
-    lookahead = _stage("lookahead")
     artifacts = _stage("artifacts")
-    if not all([normalize, validate, adjust, grid_stage, pit, lookahead, artifacts]):
-        missing = [n for n in PIPELINE_ORDER if _stage(n) is None]
-        print(f"pipeline incomplete, missing: {', '.join(missing)}", file=sys.stderr)
+    if artifacts is None:
+        print("pipeline incomplete, missing: artifacts", file=sys.stderr)
         return 2
-
-    panel, r = normalize(panel)  # type: ignore[operator]
-    reports.append(r)
-    steps.extend(["normalize", "validate"])
-
-    reports.append(validate(panel, spec))  # type: ignore[operator]
-
-    if args.factors:
-        factors = read_table(args.factors)
-        panel, r = adjust(panel, factors, spec)  # type: ignore[operator]
-        reports.append(r)
-        steps.append("adjust")
-    else:
-        print("warn: --factors not given, skip adjust", file=sys.stderr)
 
     if args.sessions:
         from .calendar.session import SessionCalendar
@@ -242,38 +221,36 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
     regime = RegimeCalendar(path=args.regime_rules) if args.regime_rules else RegimeCalendar()
 
-    start = pd.to_datetime(panel["trade_date"]).min().date()
-    end = pd.to_datetime(panel["trade_date"]).max().date()
-    no_limit = read_table(args.no_limit) if args.no_limit else None
-    suspensions = read_table(args.suspensions) if args.suspensions else None
-    flags, r = grid_stage(  # type: ignore[operator]
-        panel, calendar, master, regime, start, end, spec, no_limit=no_limit, suspensions=suspensions
-    )
-    reports.append(r)
-    steps.append("grid")
-
-    financial = read_table(args.financial) if args.financial else None
     industry = None
     if args.industry_rules:
         from .calendar.industry import IndustryCalendarImpl
 
         industry = IndustryCalendarImpl(path=args.industry_rules)
-    panel, r = pit(panel, financial, industry, spec)  # type: ignore[operator]
-    reports.append(r)
-    steps.append("pit")
 
-    def _ret(df: pd.DataFrame) -> pd.DataFrame:
-        out = df.sort_values(["code", "trade_date"]).copy()
-        out["ret"] = out.groupby("code", observed=True)["close"].pct_change()
-        return out
+    factors = read_table(args.factors) if args.factors else None
+    if factors is None:
+        print("warn: --factors not given, skip adjust", file=sys.stderr)
+    financial = read_table(args.financial) if args.financial else None
+    no_limit = read_table(args.no_limit) if args.no_limit else None
+    suspensions = read_table(args.suspensions) if args.suspensions else None
 
-    if {"close", "trade_date", "code"}.issubset(panel.columns):
-        replay_dates = None
-        if args.replay_step and args.replay_step > 1:
-            all_days = sorted(pd.to_datetime(panel["trade_date"]).dt.date.unique())
-            replay_dates = all_days[:: args.replay_step]
-        reports.append(lookahead(panel, _ret, dates=replay_dates, feature_cols=["ret"]))  # type: ignore[operator]
-        steps.append("lookahead")
+    runner = clean_partitioned if args.partition_year else clean_panel
+    result = runner(
+        panel,
+        spec=spec,
+        calendar=calendar,
+        master=master,
+        regime=regime,
+        industry=industry,
+        financial=financial,
+        factors=factors,
+        no_limit=no_limit,
+        suspensions=suspensions,
+        replay_step=args.replay_step,
+        replay_budget=(60 if len(panel) <= 2_000_000 else 10),
+    )
+    panel, flags, reports, steps = result.panel, result.flags, result.reports, result.steps
+    total_rows = result.rows or int(len(panel))
 
     if args.scan:
         from .clean.lookahead import scan_source
@@ -285,7 +262,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
         spec,
         reports,
         flags,
-        sensitivity={"steps": steps, "rows": int(len(panel))},
+        sensitivity={"steps": steps, "rows": total_rows},
     )
 
     from .gov.gate import decide, write_decision
@@ -322,7 +299,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
         "run_id": run_id,
         "spec_version": spec.spec_version,
         "steps": steps,
-        "rows": int(len(panel)),
+        "rows": total_rows,
         "manifest": manifest,
         "hits": [h.to_dict() for r in reports for h in r.hits],
     }

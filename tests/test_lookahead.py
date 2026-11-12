@@ -66,3 +66,19 @@ def test_scan_clean_file_passes() -> None:
     f = TMP / "clean.py"
     f.write_text("x = df['close'].rolling(5).mean()\n", encoding="utf-8")
     assert scan_source(f).ok
+
+
+def test_adaptive_sampling_caps_dates() -> None:
+    dates = pd.date_range("2024-01-02", periods=200, freq="D")
+    df = pd.DataFrame({"trade_date": dates, "code": "600001", "close": range(200)})
+    report = replay_check(df, safe_compute, feature_cols=["ret"])
+    assert report.meta["sampled"] is True
+    assert report.meta["dates"] <= 61
+
+
+def test_full_replay_when_max_dates_none() -> None:
+    dates = pd.date_range("2024-01-02", periods=80, freq="D")
+    df = pd.DataFrame({"trade_date": dates, "code": "600001", "close": range(80)})
+    report = replay_check(df, safe_compute, feature_cols=["ret"], max_dates=None)
+    assert report.meta["sampled"] is False
+    assert report.meta["dates"] == 80
