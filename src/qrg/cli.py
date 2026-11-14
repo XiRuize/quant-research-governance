@@ -119,6 +119,7 @@ def cmd_stages(_: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="qrg", description="量化研究数据清洗/治理标准库")
+    parser.add_argument("--version", action="version", version=f"qrg {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("version", help="打印版本").set_defaults(func=cmd_version)

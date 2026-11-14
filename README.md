@@ -13,9 +13,9 @@
 
 实际事故绝大多数不来自缺失值，而来自**实体、时间、事件、标签**：代码复用把两家公司拼成一条序列、调休日缺 bar、送转没进事件表、标签跨过了停牌与涨跌停。
 
-## v0.4 范围
+## 范围（v0.6）
 
-27 个模块：
+27 个模块 + 管线编排：
 
 | 层 | 模块 |
 |---|---|
@@ -27,13 +27,18 @@
 | G 文本与事件 | 采集快照、来源分级与仲裁、事件 PIT |
 | E 治理 | 门禁、trial registry、provenance |
 
+未包含（明确非目标）：事件抽取、实体消歧、事件-标的映射（G3/G4/G7），高频撮合引擎，组合优化。
+
 ## 结构
 
 ```text
-spec/      清洗契约（唯一口径来源）
-rules/     可版本化规则：制度区间、费率、行业、公司行动、会话
-src/qrg/   标准库
-tests/     验收用例
+spec/          清洗契约（唯一口径来源）+ 变更记录
+rules/         可版本化规则：制度区间、费率、行业、公司行动、会话
+src/qrg/       标准库（含 pipeline.py 分区编排）
+tests/         验收用例
+benchmarks/    规模基准（合成面板，可复现）
+examples/      真实数据适配器与分区基准
+docs/          架构、性能、真实数据记录、人机分工
 ```
 
 ## 快速开始
@@ -48,18 +53,44 @@ python -m qrg clean --spec spec/cleaning.spec.json --input panel.parquet --out r
 python -m qrg gate --dir runs/demo
 ```
 
+全市场十年（约 1000 万行）用分区模式：
+
+```powershell
+python -m qrg clean --spec spec/cleaning.spec.json `
+  --input panel.parquet --factors factors.parquet `
+  --sessions sessions.csv --security-rules security.json `
+  --industry-rules industry.json --partition-year --out runs/ten-year
+```
+
+## 性能
+
+| 行数 | 单进程 | 分区（按年） | 分区峰值 |
+|---:|---:|---:|---:|
+| 3.2M | 101s | 103s | 1.7GB |
+| 6.4M | 未测 | 203s | 2.4GB |
+| 10M（外推） | — | ~5.3 分钟 | ~3.0–3.3GB |
+
+口径、取舍与复现命令见 [`docs/performance.md`](docs/performance.md)。
+
 ## 三条硬规则
 
 1. **代码在主干**：复权、网格、PIT 时点、费用/冲击/容量、hash、门禁一律确定性实现，不接受概率输出。
 2. **AI 在边界**：LLM 只在“入库前”出现，产出候选 + 置信 + 证据；回测只读冻结表。
 3. **口径可追溯**：任何结论都要能回到 spec 版本、规则版本、数据版本与运行 id；产物带内容 hash。
 
+## 文档
+
+- [架构与模块状态](docs/architecture.md)
+- [性能与分区](docs/performance.md)
+- [真实数据接入（CSMAR）](docs/csmar-run.md)
+- [代码 review 与修复](docs/code-review-v041.md)
+- [文本证据层](docs/text-evidence.md)
+- [人机分工](docs/ai-collaboration.md)
+
 ## 状态
 
-v0.4：清洗 + 执行成本 + 容量尾部 + 文本证据 + 治理五层可端到端运行（27 模块、287 用例）。模块就绪情况见 `python -m qrg stages`。
+v0.6：清洗 + 执行成本 + 容量尾部 + 文本证据 + 治理五层可端到端运行；**306 个测试**；支持十年全市场分区跑。模块就绪情况见 `python -m qrg stages`。
 
 ## License
 
-MIT
-
-
+[MIT](LICENSE)
