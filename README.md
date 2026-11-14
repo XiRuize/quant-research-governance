@@ -62,13 +62,11 @@ python -m qrg clean --spec spec/cleaning.spec.json `
   --industry-rules industry.json --partition-year --out runs/ten-year
 ```
 
-## 性能
+## 性能（注意口径）
 
-| 行数 | 单进程 | 分区（按年） | 分区峰值 |
-|---:|---:|---:|---:|
-| 3.2M | 101s | 103s | 1.7GB |
-| 6.4M | 未测 | 203s | 2.4GB |
-| 10M（外推） | — | ~5.3 分钟 | ~3.0–3.3GB |
+- **同一审计强度**（1.6M 行、回放 10 日）：v0.5.2 **71.4s** → v0.6 **48.7s**，主要来自 `normalize`（34.4s → 7.5s）。
+- **分区不是提速手段**：3.2M 单进程 101s、分区 103s，分区换的是内存（峰值 1.7GB）。
+- **10M 外推 ~5.3 分钟 / ~3GB**，前提是回放只审计 10 个抽样交易日；`--replay-step 1` 全量回放会到小时级。
 
 口径、取舍与复现命令见 [`docs/performance.md`](docs/performance.md)。
 

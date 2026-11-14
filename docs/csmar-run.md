@@ -81,7 +81,28 @@ python -m qrg clean --spec spec/cleaning.spec.json `
 | normalize（116,588 行） | 3.53s | **2.25s** |
 | 端到端（含 lookahead 回放） | ~11s | **9.5s** |
 
-`normalize` 通过“已在 tick 网格上的值跳过 Decimal 往返”降到 2.25s。端到端仍是 8.5s，瓶颈是 `lookahead` 回放（每个交易日重算一次，约 3s）。新增 `--replay-step` 抽样（step=5 时端到端 5.7s），但抽样式审计弱于全量回放，默认仍是 1。\n\n向量路径与逐行路径的一致性由 `tests/test_grid_equivalence.py` 保证（同输入逐值相等）。
+`normalize` 通过“已在 tick 网格上的值跳过 Decimal 往返”降到 2.25s；端到端约 8.5s，瓶颈是 `lookahead` 回放。
+新增 `--replay-step` 抽样（step=5 时端到端 5.7s），但抽样式审计弱于全量回放。向量路径与逐行路径的一致性由
+`tests/test_grid_equivalence.py` 保证（同输入逐值相等）。
+
+## v0.6.1：退市日期与 ST 历史改用派生表
+
+数据源新增了两张派生表，接入后不再用 proxy：
+
+| 表 | 内容 | 用法 |
+|---|---|---|
+| `data/ref/csmar/DERIVED_delist_dates.parquet` | 387 条退市记录，多源交叉（CG_Co / TRDNEW_Co / TRD_Co），带 `date_conflict_days` | 直接生成 `delisted` 事件 |
+| `data/ref/csmar/DERIVED_st_history.parquet` | 2019–2025 年度 ST 状态，5,724 只 | 年末状态变化 → `st_on/st_off`（年度粒度，仍标 proxy） |
+
+2026-09 重跑结果：
+
+- 退市：**4 条真实日期、0 条 proxy**；另有 1 条（600018）因 `stock_basic` 只保留最近一次上市日而冲突，跳过；
+- ST：年度史覆盖 2019–2025，2026 年回退到简称；`is_st=True` 共 **4,252 行**，全部标 `proxy`，审计 `GRID.st_proxy`；
+- 网格 116,795 行、停牌 241 行（含公告停牌）；
+- 行业未知 **4 行**——北交所 92x 已有 SW 覆盖（355 只），此前“北交所行业覆盖差”的说法已过期。
+
+仍未闭合：ST 是**年度**派生史，不是逐日事件；2026 年仍依赖简称；北交所行业虽覆盖，但分类版本/变更史粒度仍弱于沪深。
+
 
 ### 无涨跌幅限制日（TRD_NoLimit）
 

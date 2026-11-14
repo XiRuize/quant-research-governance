@@ -106,10 +106,35 @@ def main() -> None:
             }
         )
 
-    # 退市 proxy：LISTING_STATE==2 且窗口内最后一天之后不再出现
+    # 退市：优先用 CSMAR 派生表（多源交叉），缺失才退回 last_trade+1d proxy
+    delist_path = data_root / "ref" / "csmar" / "DERIVED_delist_dates.parquet"
+    delist_map: dict[str, pd.Timestamp] = {}
+    if delist_path.exists():
+        dd = pd.read_parquet(delist_path).dropna(subset=["DelistedDate"])
+        dd["code"] = _code(dd["Stkcd"])
+        delist_map = {str(r.code): pd.Timestamp(r.DelistedDate) for r in dd.itertuples(index=False)}
+
     delisted_proxy = 0
+    delisted_real = 0
+    delisted_conflict = 0
     last_in_window = panel.groupby("code")["trade_date"].max()
     for code in universe:
+        if code in delist_map:
+            listed_day = listed_map.get(code)
+            if listed_day is not None and delist_map[code] <= pd.Timestamp(listed_day):
+                # stock_basic 只保留最近一次上市日；早期生命周期的退市日会早于它
+                delisted_conflict += 1
+                continue
+            events.append(
+                {
+                    "code": code,
+                    "event": "delisted",
+                    "effective_date": delist_map[code].strftime("%Y-%m-%d"),
+                    "payload": {"proxy": False, "source": "DERIVED_delist_dates"},
+                }
+            )
+            delisted_real += 1
+            continue
         if state_map.get(code) != 2:
             continue
         last_day = pd.Timestamp(last_in_window[code])
@@ -124,6 +149,38 @@ def main() -> None:
             )
             delisted_proxy += 1
 
+    # ---------------------------------------------------------------- ST：年度派生史 + 近期简称
+    st_hist_path = data_root / "ref" / "csmar" / "DERIVED_st_history.parquet"
+    annual_cutoff: pd.Timestamp | None = None
+    st_annual_events = 0
+    if st_hist_path.exists():
+        hist = pd.read_parquet(st_hist_path)
+        hist["code"] = _code(hist["Stkcd"])
+        hist["EndDate"] = pd.to_datetime(hist["EndDate"])
+        hist = hist.loc[hist["code"].isin(set(universe))].sort_values(["code", "EndDate"])
+        if not hist.empty:
+            annual_cutoff = hist["EndDate"].max()
+        for code, grp in hist.groupby("code", sort=True):
+            prev_state: bool | None = None
+            listed_day = listed_map.get(code)
+            for row in grp.itertuples(index=False):
+                cur = bool(row.is_st)
+                effective = pd.Timestamp(row.EndDate) + pd.Timedelta(days=1)
+                if listed_day is not None and effective <= pd.Timestamp(listed_day):
+                    prev_state = cur
+                    continue
+                if prev_state is None or cur != prev_state:
+                    events.append(
+                        {
+                            "code": code,
+                            "event": "st_on" if cur else "st_off",
+                            "effective_date": effective.strftime("%Y-%m-%d"),
+                            "payload": {"proxy": True, "source": "annual_st_history"},
+                        }
+                    )
+                    st_annual_events += 1
+                    prev_state = cur
+
     # ---------------------------------------------------------------- ST proxy（简称）
     st_table = pq.read_table(
         csmar / "行情" / "TRD_StockTrend" / "data.parquet",
@@ -135,6 +192,9 @@ def main() -> None:
     st_table["is_st_name"] = st_table["ShortName"].astype(str).str.contains(ST_RE)
     st_table["TradingDate"] = pd.to_datetime(st_table["TradingDate"])
     st_table = st_table.sort_values(["code", "TradingDate"])
+    # 年度派生史已覆盖到 annual_cutoff；简称只用于其后的近期区间，避免同日双源打架
+    if annual_cutoff is not None:
+        st_table = st_table.loc[st_table["TradingDate"] > annual_cutoff].copy()
 
     st_events = 0
     st_codes = set()
@@ -247,7 +307,9 @@ def main() -> None:
         "bse_codes": int(sum(1 for c in universe if c.startswith("92"))),
         "panel_rows": int(len(panel)),
         "listing_proxy": listing_proxy,
+        "delisted_real": delisted_real,
         "delisted_proxy": delisted_proxy,
+        "st_annual_events": st_annual_events,
         "st_events_proxy": st_events,
         "st_codes_proxy": len(st_codes),
         "factor_rows": int(len(factors)),

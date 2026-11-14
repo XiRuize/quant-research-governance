@@ -67,7 +67,10 @@
 
 ## 仍然存在的边界
 
-- **退市日期是 proxy**（最后交易日 + 1 天），因为 `stock_basic` 没有退市日期；
+> 以下为 v0.4.1 当时的状态；v0.6.1 已接入 `DERIVED_delist_dates` 与 `DERIVED_st_history`，
+> 退市日期与 ST 年度史已不再是 proxy 之外的空缺（详见 [`csmar-run.md`](csmar-run.md)）。
+
+- **退市日期是 proxy**（最后交易日 + 1 天），因为当时 `stock_basic` 没有退市日期；
 - **ST 仍无历史**，只能显式标 unknown，不能补；
 - **北交所覆盖缺口**属于数据源问题，库只能报告，不能修复；
 - 网格逐行 `master.state()` 在 17 万行约 6 秒，全市场十年会到小时级，需要向量化。
