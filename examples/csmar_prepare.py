@@ -149,78 +149,55 @@ def main() -> None:
             )
             delisted_proxy += 1
 
-    # ---------------------------------------------------------------- ST：年度派生史 + 近期简称
-    st_hist_path = data_root / "ref" / "csmar" / "DERIVED_st_history.parquet"
-    annual_cutoff: pd.Timestamp | None = None
+    # ---------------------------------------------------------------- ST：日频简称全历史（proxy）
+    from qrg.master.derive import st_events_from_names
+
+    trend_path = data_root / "ref" / "csmar" / "TRD_StockTrend.parquet"
+    st_events_daily = 0
     st_annual_events = 0
-    if st_hist_path.exists():
-        hist = pd.read_parquet(st_hist_path)
-        hist["code"] = _code(hist["Stkcd"])
-        hist["EndDate"] = pd.to_datetime(hist["EndDate"])
-        hist = hist.loc[hist["code"].isin(set(universe))].sort_values(["code", "EndDate"])
-        if not hist.empty:
-            annual_cutoff = hist["EndDate"].max()
-        for code, grp in hist.groupby("code", sort=True):
-            prev_state: bool | None = None
-            listed_day = listed_map.get(code)
-            for row in grp.itertuples(index=False):
-                cur = bool(row.is_st)
-                effective = pd.Timestamp(row.EndDate) + pd.Timedelta(days=1)
-                if listed_day is not None and effective <= pd.Timestamp(listed_day):
-                    prev_state = cur
-                    continue
-                if prev_state is None or cur != prev_state:
-                    events.append(
-                        {
-                            "code": code,
-                            "event": "st_on" if cur else "st_off",
-                            "effective_date": effective.strftime("%Y-%m-%d"),
-                            "payload": {"proxy": True, "source": "annual_st_history"},
-                        }
-                    )
-                    st_annual_events += 1
-                    prev_state = cur
-
-    # ---------------------------------------------------------------- ST proxy（简称）
-    st_table = pq.read_table(
-        csmar / "行情" / "TRD_StockTrend" / "data.parquet",
-        columns=["Symbol", "ShortName", "TradingDate"],
-        filters=[("TradingDate", ">=", (start - pd.Timedelta(days=args.st_lookback_days)).date().isoformat())],
-    ).to_pandas()
-    st_table["code"] = _code(st_table["Symbol"])
-    st_table = st_table.loc[st_table["code"].isin(set(universe))].copy()
-    st_table["is_st_name"] = st_table["ShortName"].astype(str).str.contains(ST_RE)
-    st_table["TradingDate"] = pd.to_datetime(st_table["TradingDate"])
-    st_table = st_table.sort_values(["code", "TradingDate"])
-    # 年度派生史已覆盖到 annual_cutoff；简称只用于其后的近期区间，避免同日双源打架
-    if annual_cutoff is not None:
-        st_table = st_table.loc[st_table["TradingDate"] > annual_cutoff].copy()
-
-    st_events = 0
-    st_codes = set()
-    for code, grp in st_table.groupby("code", sort=True):
-        prev: bool | None = None
-        for row in grp.itertuples(index=False):
-            cur = bool(row.is_st_name)
-            if prev is None or cur != prev:
-                events.append(
-                    {
-                        "code": code,
-                        "event": "st_on" if cur else "st_off",
-                        "effective_date": pd.Timestamp(row.TradingDate).strftime("%Y-%m-%d"),
-                        "payload": {"proxy": True, "source": "short_name"},
-                    }
-                )
-                st_events += 1
-                if cur:
-                    st_codes.add(code)
-                prev = cur
+    st_codes: set[str] = set()
+    st_vintage: str | None = None
+    if trend_path.exists():
+        trend = pd.read_parquet(trend_path, columns=["Symbol", "ShortName", "TradingDate"])
+        trend["code"] = _code(trend["Symbol"])
+        trend = trend.loc[trend["code"].isin(set(universe))].rename(
+            columns={"ShortName": "name", "TradingDate": "trade_date"}
+        )
+        st_vintage = pd.to_datetime(trend["trade_date"]).max().strftime("%Y-%m-%d")
+        st_events = st_events_from_names(trend, vintage_date=st_vintage)
+        events.extend(st_events)
+        st_events_daily = len(st_events)
+        st_codes = {e["code"] for e in st_events if e["event"] == "st_on"}
+    else:
+        # 兜底：年度派生史（2019–2025），粒度到年
+        st_hist_path = data_root / "ref" / "csmar" / "DERIVED_st_history.parquet"
+        if st_hist_path.exists():
+            hist = pd.read_parquet(st_hist_path)
+            hist["code"] = _code(hist["Stkcd"])
+            hist["EndDate"] = pd.to_datetime(hist["EndDate"])
+            hist = hist.loc[hist["code"].isin(set(universe))].sort_values(["code", "EndDate"])
+            for code, grp in hist.groupby("code", sort=True):
+                prev_state: bool | None = None
+                for row in grp.itertuples(index=False):
+                    cur = bool(row.is_st)
+                    if prev_state is None or cur != prev_state:
+                        events.append(
+                            {
+                                "code": code,
+                                "event": "st_on" if cur else "st_off",
+                                "effective_date": (pd.Timestamp(row.EndDate) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                                "payload": {"proxy": True, "source": "annual_st_history"},
+                            }
+                        )
+                        st_annual_events += 1
+                        prev_state = cur
 
     security = {
         "board_prefixes": {"main": ["60", "00"], "star": ["68"], "chinext": ["30"], "bse": ["92"]},
         "defaults": {"lot_size": 100, "tick_size": 0.01},
         "events": events,
-        "dataset": "csmar TRD_Dalyr/TRD_StockTrend/stock_basic; listed/delisted/st=proxy",
+        "dataset": "csmar TRD_Dalyr/TRD_StockTrend/stock_basic; listed/delisted/st=daily short-name proxy",
+        "st_vintage": st_vintage,
     }
     (out / "security.json").write_text(json.dumps(security, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -302,6 +279,70 @@ def main() -> None:
     suspensions = ts[["code", "start_date", "end_date"]].drop_duplicates().sort_values(["start_date", "code"])
     suspensions.to_parquet(out / "suspensions.parquet", index=False)
 
+    # ---------------------------------------------------------------- 财务 PIT / 市值 / vintage 清单
+    fin_path = data_root / "ref" / "financial" / "financial_pit.parquet"
+    financial_rows = 0
+    fin_min = fin_max = None
+    if fin_path.exists():
+        fin = pd.read_parquet(fin_path)
+        fin["code"] = _code(fin["SECURITY_CODE"])
+        fin["notice_date"] = pd.to_datetime(fin["NOTICE_DATE"], errors="coerce")
+        fin = fin.loc[fin["code"].isin(set(universe)) & fin["notice_date"].notna()].copy()
+        mapping = {
+            "TOTAL_OPERATE_INCOME": "revenue",
+            "PARENT_NETPROFIT": "net_profit",
+            "WEIGHTAVG_ROE": "roe",
+            "BPS": "bps",
+            "BASIC_EPS": "eps",
+            "YSTZ": "revenue_yoy",
+            "SJLTZ": "profit_yoy",
+        }
+        keep = [c for c in mapping if c in fin.columns]
+        long = fin.melt(id_vars=["code", "notice_date"], value_vars=keep, var_name="item", value_name="value")
+        long["item"] = long["item"].map(mapping)
+        long = long.dropna(subset=["value"]).drop_duplicates(["code", "notice_date", "item"], keep="last")
+        long = long.loc[:, ["code", "notice_date", "item", "value"]].sort_values(["code", "notice_date", "item"])
+        long.to_parquet(out / "financial.parquet", index=False)
+        financial_rows = int(len(long))
+        fin_min = long["notice_date"].min()
+        fin_max = long["notice_date"].max()
+
+    mc_path = data_root / "ref" / "market_cap" / "market_cap.parquet"
+    mc_rows = 0
+    mc_min = mc_max = None
+    if mc_path.exists():
+        mc = pd.read_parquet(mc_path)
+        mc["code"] = _code(mc["code"])
+        mc["trade_date"] = pd.to_datetime(mc["date"], errors="coerce")
+        mc_full_min, mc_full_max = mc["trade_date"].min(), mc["trade_date"].max()
+        mc = mc.loc[
+            mc["code"].isin(set(universe))
+            & mc["trade_date"].between(start, end)
+            & mc["trade_date"].notna()
+        ]
+        cols = [c for c in ("code", "trade_date", "total_mv", "circ_mv", "pe_ttm", "pb") if c in mc.columns]
+        mc = mc.loc[:, cols].sort_values(["trade_date", "code"])
+        mc.to_parquet(out / "market_cap.parquet", index=False)
+        mc_rows = int(len(mc))
+        mc_min, mc_max = mc_full_min, mc_full_max
+
+    def _fmt(value):
+        return None if value is None else pd.Timestamp(value).strftime("%Y-%m-%d")
+
+    vintages = {
+        "panel": {"source": "csmar TRD_Dalyr", "rows": int(len(panel)), "min": _fmt(panel["trade_date"].min()), "max": _fmt(panel["trade_date"].max())},
+        "adjust_factor": {"source": "csmar TRD_AdjustFactor", "rows": int(len(af)), "min": _fmt(af["trade_date"].min()), "max": _fmt(af["trade_date"].max())},
+        "stock_basic": {"snapshot_date": pd.to_datetime(sb["snapshot_date"], errors="coerce").max().strftime("%Y-%m-%d") if "snapshot_date" in sb.columns and sb["snapshot_date"].notna().any() else None, "rows": int(len(sb))},
+        "st": {"source": "TRD_StockTrend daily short name (proxy)", "events": st_events_daily, "annual_fallback_events": st_annual_events, "vintage": st_vintage},
+        "delist": {"source": "DERIVED_delist_dates", "rows": len(delist_map)},
+        "industry": {"source": "industry_pit_sw", "rows": int(len(ind))},
+        "financial": {"source": "financial_pit", "rows": financial_rows, "min": _fmt(fin_min), "max": _fmt(fin_max)},
+        "market_cap": {"source": "market_cap", "rows": mc_rows, "min": _fmt(mc_min), "max": _fmt(mc_max)},
+        "no_limit": {"source": "TRD_NoLimit", "rows": int(len(nl))},
+        "suspensions": {"source": "TSR_Stkstat", "intervals": int(len(suspensions))},
+    }
+    (out / "vintages.json").write_text(json.dumps(vintages, ensure_ascii=False, indent=2), encoding="utf-8")
+
     st_summary = {
         "universe": len(universe),
         "bse_codes": int(sum(1 for c in universe if c.startswith("92"))),
@@ -309,9 +350,11 @@ def main() -> None:
         "listing_proxy": listing_proxy,
         "delisted_real": delisted_real,
         "delisted_proxy": delisted_proxy,
+        "st_events_daily": st_events_daily,
         "st_annual_events": st_annual_events,
-        "st_events_proxy": st_events,
         "st_codes_proxy": len(st_codes),
+        "financial_rows": financial_rows,
+        "market_cap_rows": mc_rows,
         "factor_rows": int(len(factors)),
         "no_limit_rows": int(len(nl)),
         "suspension_intervals": int(len(suspensions)),

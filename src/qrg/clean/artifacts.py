@@ -21,6 +21,8 @@ QUALITY_REPORT = "data_quality_report.json"
 CLEAN_REPORT = "clean_report.json"
 TRADING_FLAGS = "trading_flags.parquet"
 SENSITIVITY = "cleaning_sensitivity.json"
+PANEL = "panel.parquet"
+COVERAGE = "data_coverage.json"
 MANIFEST = "manifest.json"
 
 
@@ -48,6 +50,9 @@ def write_artifacts(
     reports: Sequence[AuditReport] = (),
     flags: pd.DataFrame | None = None,
     sensitivity: Mapping[str, Any] | None = None,
+    flags_parts: Sequence[str | Path] | None = None,
+    panel: pd.DataFrame | None = None,
+    coverage: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     """写出四件套 + manifest，返回 manifest。"""
     out = Path(out_dir)
@@ -90,6 +95,17 @@ def write_artifacts(
     flags_out.to_parquet(tmp_flags, index=False)
     os.replace(tmp_flags, flags_path)
 
+    if coverage is not None:
+        _atomic_write(out / COVERAGE, _dump_json(dict(coverage)))
+    if panel is not None and not panel.empty:
+        panel_out = panel.copy()
+        if "trade_date" in panel_out.columns:
+            panel_out["trade_date"] = pd.to_datetime(panel_out["trade_date"])
+            panel_out = panel_out.sort_values(["trade_date", "code"]).reset_index(drop=True)
+        tmp_panel = (out / PANEL).with_suffix(".parquet.tmp")
+        panel_out.to_parquet(tmp_panel, index=False)
+        os.replace(tmp_panel, out / PANEL)
+
     manifest = {
         QUALITY_REPORT: _sha256_file(out / QUALITY_REPORT),
         CLEAN_REPORT: _sha256_file(out / CLEAN_REPORT),
@@ -97,6 +113,10 @@ def write_artifacts(
         TRADING_FLAGS: _sha256_file(flags_path),
         "spec_version": spec.spec_version,
     }
+    if coverage is not None:
+        manifest[COVERAGE] = _sha256_file(out / COVERAGE)
+    if panel is not None and not panel.empty:
+        manifest[PANEL] = _sha256_file(out / PANEL)
     _atomic_write(out / MANIFEST, _dump_json(manifest))
     return manifest
 

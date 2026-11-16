@@ -141,6 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--scan", help="静态未来函数扫描目录/文件")
     clean.add_argument("--no-limit", help="无涨跌幅限制日表 (code,trade_date)")
     clean.add_argument("--suspensions", help="停复牌区间表 (code,start_date,end_date)")
+    clean.add_argument("--market-cap", help="市值/估值表 (code,trade_date,total_mv,circ_mv,...)")
+    clean.add_argument("--vintages", help="数据 vintage 清单 json（adapter 的 vintages.json）")
     clean.add_argument("--partition-year", action="store_true", help="按自然年分区处理以控内存")
     clean.add_argument("--replay-step", type=int, default=0, help="回放抽样步长：0=自动(≤60日)，1=全量，N=每N日")
 
@@ -234,6 +236,13 @@ def cmd_clean(args: argparse.Namespace) -> int:
     financial = read_table(args.financial) if args.financial else None
     no_limit = read_table(args.no_limit) if args.no_limit else None
     suspensions = read_table(args.suspensions) if args.suspensions else None
+    market_cap = read_table(args.market_cap) if args.market_cap else None
+    if market_cap is not None and args.partition_year:
+        print("error: --market-cap 暂不支持与 --partition-year 同时使用", file=sys.stderr)
+        return 4
+    vintages = None
+    if args.vintages:
+        vintages = json.loads(Path(args.vintages).read_text(encoding="utf-8"))
 
     runner = clean_partitioned if args.partition_year else clean_panel
     result = runner(
@@ -247,11 +256,28 @@ def cmd_clean(args: argparse.Namespace) -> int:
         factors=factors,
         no_limit=no_limit,
         suspensions=suspensions,
+        market_cap=market_cap,
         replay_step=args.replay_step,
         replay_budget=(60 if len(panel) <= 2_000_000 else 10),
     )
     panel, flags, reports, steps = result.panel, result.flags, result.reports, result.steps
     total_rows = result.rows or int(len(panel))
+
+    from .quality.coverage import build_coverage
+
+    coverage_panel = panel if not panel.empty else pd.DataFrame({"trade_date": [], "code": []})
+    coverage, coverage_report = build_coverage(
+        coverage_panel,
+        factors=factors,
+        financial=financial,
+        market_cap=market_cap,
+        no_limit=no_limit,
+        suspensions=suspensions,
+        vintages=vintages,
+    )
+    if panel.empty:
+        coverage["window"] = {"start": None, "end": None, "rows": total_rows}
+    reports.append(coverage_report)
 
     if args.scan:
         from .clean.lookahead import scan_source
@@ -264,6 +290,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
         reports,
         flags,
         sensitivity={"steps": steps, "rows": total_rows},
+        panel=result.panel,
+        coverage=coverage,
     )
 
     from .gov.gate import decide, write_decision

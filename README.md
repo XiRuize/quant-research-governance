@@ -50,6 +50,9 @@ $env:PYTHONPATH = "src"
 python -m pytest -q
 python -m qrg version
 python -m qrg clean --spec spec/cleaning.spec.json --input panel.parquet --out runs/demo --registry runs/trials
+# 可选输入：财务 PIT、市值、覆盖清单
+python -m qrg clean --spec spec/cleaning.spec.json --input panel.parquet --factors factors.parquet `
+  --financial financial.parquet --market-cap market_cap.parquet --vintages vintages.json --out runs/full
 python -m qrg gate --dir runs/demo
 ```
 

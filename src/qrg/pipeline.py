@@ -43,6 +43,7 @@ def clean_panel(
     factors: pd.DataFrame | None = None,
     no_limit: pd.DataFrame | None = None,
     suspensions: pd.DataFrame | None = None,
+    market_cap: pd.DataFrame | None = None,
     replay_step: int = 0,
     replay_budget: int = 60,
 ) -> CleanResult:
@@ -88,6 +89,12 @@ def clean_panel(
     reports.append(r)
     steps.append("pit")
 
+    if market_cap is not None and not market_cap.empty:
+        from .clean.market import merge_market_cap
+
+        panel = merge_market_cap(panel, market_cap)
+        steps.append("market_cap")
+
     if {"close", "trade_date", "code"}.issubset(panel.columns):
         if replay_step == 1:
             reports.append(replay_check(panel, _ret, feature_cols=["ret"], max_dates=None))
@@ -115,12 +122,15 @@ def clean_partitioned(
     factors: pd.DataFrame | None = None,
     no_limit: pd.DataFrame | None = None,
     suspensions: pd.DataFrame | None = None,
+    market_cap: pd.DataFrame | None = None,
     replay_step: int = 0,
     replay_budget: int = 60,
     lookback_days: int = 5,
     flags_out_dir: str | Path | None = None,
 ) -> CleanResult:
     """按自然年分区跑；每块带 lookback 行以保留 prev_close 跨年连续性。"""
+    if market_cap is not None and not market_cap.empty:
+        raise SpecError("market_cap is not supported with partition mode yet")
     if panel.empty:
         return CleanResult(panel=panel, flags=pd.DataFrame(), reports=[], steps=[])
 

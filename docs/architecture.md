@@ -72,9 +72,9 @@ spec ─┬─> normalize ─> validate ─┬─> adjust ─┐
 
 ```text
 qrg version | stages
-qrg clean   --spec ... --input ... --out ... [--factors --financial --industry-rules
-            --security-rules --sessions --regime-rules --no-limit --suspensions
-            --partition-year --replay-step --registry --scan]
+qrg clean   --spec ... --input ... --out ... [--factors --financial --market-cap --vintages
+            --industry-rules --security-rules --sessions --regime-rules --no-limit
+            --suspensions --partition-year --replay-step --registry --scan]
 qrg gate    --dir OUT
 qrg simulate --orders ... --flags ... --panel ... --out ...
 qrg cost    --fills ... [--slippage ...] --out ...
@@ -82,7 +82,7 @@ qrg capacity --weights ... --panel ... --gross-alpha-bps ... --out ...
 qrg tail    --curve ... --out ...
 ```
 
-`clean` 产出四件套 + `gate.json` + `provenance.json`；被门禁 BLOCKED 时退出码 3。
+`clean` 产出四件套 + `gate.json` + `provenance.json` + `data_coverage.json`；给 `--market-cap` 时额外写 `panel.parquet`。被门禁 BLOCKED 时退出码 3。
 
 ## 口径与假设
 

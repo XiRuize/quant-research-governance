@@ -27,7 +27,7 @@ def _prepare_financial(financial: pd.DataFrame, lag_days: int) -> pd.DataFrame:
         raise SpecError(f"financial missing columns: {missing}")
     f = financial.loc[:, list(FIN_COLUMNS)].copy()
     f["code"] = f["code"].astype("string")
-    f["notice_date"] = pd.to_datetime(f["notice_date"])
+    f["notice_date"] = pd.to_datetime(f["notice_date"]).astype("datetime64[ns]")
     f["value"] = pd.to_numeric(f["value"], errors="coerce")
     f = f.dropna(subset=["notice_date", "item"])
     # 同日同科目取最后一条（重述按公告顺序后到者）
@@ -64,7 +64,7 @@ def pit_merge(
         raise SpecError("lag_days must be >= 0")
 
     out = panel.copy()
-    out["trade_date"] = pd.to_datetime(out["trade_date"])
+    out["trade_date"] = pd.to_datetime(out["trade_date"]).astype("datetime64[ns]")
     out["code"] = out["code"].astype("string")
 
     codes: list[str] = []

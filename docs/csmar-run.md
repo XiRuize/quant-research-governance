@@ -85,23 +85,25 @@ python -m qrg clean --spec spec/cleaning.spec.json `
 新增 `--replay-step` 抽样（step=5 时端到端 5.7s），但抽样式审计弱于全量回放。向量路径与逐行路径的一致性由
 `tests/test_grid_equivalence.py` 保证（同输入逐值相等）。
 
-## v0.6.1：退市日期与 ST 历史改用派生表
+## v0.6.1：退市、逐日 ST、财务 PIT、市值接入
 
-数据源新增了两张派生表，接入后不再用 proxy：
-
-| 表 | 内容 | 用法 |
+| 输入 | 现状 | 2026-09 实测 |
 |---|---|---|
-| `data/ref/csmar/DERIVED_delist_dates.parquet` | 387 条退市记录，多源交叉（CG_Co / TRDNEW_Co / TRD_Co），带 `date_conflict_days` | 直接生成 `delisted` 事件 |
-| `data/ref/csmar/DERIVED_st_history.parquet` | 2019–2025 年度 ST 状态，5,724 只 | 年末状态变化 → `st_on/st_off`（年度粒度，仍标 proxy） |
+| `DERIVED_delist_dates.parquet` | 387 条，多源交叉，带 `date_conflict_days` | 4 条真实退市、0 proxy；600018 早期生命周期冲突跳过 |
+| `TRD_StockTrend` 日频简称 | 11,469,614 行、2016–2026 日频 `ShortName` | 生成 **6,699 条 `st_on/st_off`**（585 只曾 ST），全部 proxy；同日简称变化不再等年度 |
+| `financial_pit.parquet` | `NOTICE_DATE` 2018-04..2026-10，7 个科目 | 长表 **1,077,236 行**；PIT 覆盖率 **99.98%**（缺 24 行） |
+| `market_cap.parquet` | 2018-01..2026-10 | 9 月 **109,221 行**；`panel.parquet` 里 `total_mv/circ_mv/pe_ttm/pb` 覆盖 109,014 / 116,588 行 |
 
-2026-09 重跑结果：
+产物新增：
 
-- 退市：**4 条真实日期、0 条 proxy**；另有 1 条（600018）因 `stock_basic` 只保留最近一次上市日而冲突，跳过；
-- ST：年度史覆盖 2019–2025，2026 年回退到简称；`is_st=True` 共 **4,252 行**，全部标 `proxy`，审计 `GRID.st_proxy`；
-- 网格 116,795 行、停牌 241 行（含公告停牌）；
-- 行业未知 **4 行**——北交所 92x 已有 SW 覆盖（355 只），此前“北交所行业覆盖差”的说法已过期。
+- `vintages.json`：每个输入的 source / rows / min / max / snapshot_date；
+- `data_coverage.json`：面板窗口 + 各输入覆盖区间；主数据来自单日快照时记 `COV.single_vintage_snapshot` (WARN)；
+- `panel.parquet`：仅在给 `--market-cap` 时写出（含行业、财务 PIT、市值列）。
 
-仍未闭合：ST 是**年度**派生史，不是逐日事件；2026 年仍依赖简称；北交所行业虽覆盖，但分类版本/变更史粒度仍弱于沪深。
+2026-09 重跑：网格 116,588 行、停牌 241 行（含公告停牌）、`is_st=True` 4,252 行（全部 proxy）、行业未知 4 行。
+
+仍未闭合：ST 仍是**简称派生**（proxy），不是交易所正式特别处理事件；`stock_basic` 只有单日快照，历史 universe 仍有幸存者偏差；财务字段只有 7 个科目、2018 年前无数据。
+
 
 
 ### 无涨跌幅限制日（TRD_NoLimit）
