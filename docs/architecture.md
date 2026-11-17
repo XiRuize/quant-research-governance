@@ -43,7 +43,7 @@ spec ─┬─> normalize ─> validate ─┬─> adjust ─┐
 | F7 规范化 | `src/qrg/quality/normalize.py` | ✅ |
 | F1 证券主数据 | `src/qrg/master/security.py` | ✅ |
 | F2 交易日历 | `src/qrg/calendar/session.py` | ✅ |
-| F3 公司行动 | `src/qrg/master/actions.py` | ✅ |
+| F3 公司行动 | `src/qrg/master/actions.py` | ✅ |\n| F8 指数成分 | `src/qrg/master/index_members.py` | ✅ |
 | B1 硬校验 | `src/qrg/clean/validate.py` | ✅ |
 | B2 复权 | `src/qrg/clean/adjust.py` | ✅ |
 | B6 制度日历 | `src/qrg/calendar/regime.py` | ✅ |

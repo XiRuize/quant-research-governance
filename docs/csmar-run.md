@@ -118,3 +118,43 @@ python -m qrg clean --spec spec/cleaning.spec.json `
 - `suspended = 缺行 ∪ 公告停牌`，审计输出 `GRID.suspension_announced`（INFO）。
 
 9 月停牌从 167 行升到 201 行——多出来的不是噪声，是“有行但公告停牌”的部分。
+
+## v0.6.2：30 年行情、20 年因子、指数成分
+
+数据源补下载了长历史与指数表：
+
+| 表 | 现状 | 用途 |
+|---|---|---|
+| `TRD_Dalyr` | **1996-01-02..2026-10-30，18,839,260 行**（原 2016 起） | 面板可回溯到 1996 |
+| `TRD_AdjustFactor` | **2006-01-04..2026-10-30，54,317 行**（原 2016 起） | 复权覆盖 20 年 |
+| `IDX_Smprat` | 7,384,082 行，11 个指数，2005-01..2026-11 日频成分权重 | 指数成分/权重 as-of |
+| `IDX_Chgsmp` | 13,410,883 行，5,040 个指数，含 000300/000905 调整记录 | 未接入（字段编码需字典，且仅 2015–2019） |
+
+适配器改为**优先读 `data/ref/csmar` 整合版**（含长历史），缺失才回退 `external` 原始表。
+
+### 2010–2012 回归
+
+```
+universe 2,469 / panel 1,508,720 行 / clean 123s / gate warn
+```
+
+- 退市：236 条真实日期（0 proxy）；
+- 复权：33,711 行；**4 只股票的后复权因子在长历史里下降**（000887 / 600094 / 600145 / 600381），
+  不做修复，直接剔除并记 `factor_dropped_nonmonotonic=4`，由 `ADJ.base_proxy` 兜底；
+- ST：`TRD_StockTrend` 仍从 2016 起，2010 窗口 **全部 `is_st_unknown`（1,566,547 行）**，
+  `GRID.limit_ambiguous` 78,260 行——这是诚实结果，不拿当前 ST 反推历史；
+- 财务：2018 起，窗口内 100% 缺失，`PIT.financial_missing` 如实记录；
+- 指数：`index_weights.parquet` 1,373,000 行 / 6 个指数（含 400 天 lookback）。
+
+### 指数成分 API
+
+新增 `qrg.master.index_members.IndexConstituents`：
+
+```python
+cal = IndexConstituents.from_parquet("index_weights.parquet")
+cal.members("000906", "2011-01-05")      # as-of，不前视
+cal.weight_of("000906", "2011-01-05", "000001")
+```
+
+限制：`IDX_Smprat` 只覆盖 11 个指数（含 000906 中证800、000010 上证180 等），**不含 000300/000905 的完整权重史**；
+`IDX_Chgsmp` 可补成分变更，但字段编码未定且仅到 2019，暂不接入。

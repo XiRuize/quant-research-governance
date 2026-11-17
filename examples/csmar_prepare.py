@@ -34,6 +34,14 @@ def _in_universe(code: str) -> bool:
     return len(code) == 6 and code[:2] in CODE_PREFIXES
 
 
+def _read_ref_or_raw(data_root: Path, csmar: Path, raw_parts: tuple[str, ...], name: str, **kwargs):
+    """优先读 data/ref 的整合版（含更早历史），否则回退 external 原始表。"""
+    ref = data_root / "ref" / "csmar" / f"{name}.parquet"
+    if ref.exists():
+        return pd.read_parquet(ref, **kwargs)
+    return pq.read_table(csmar.joinpath(*raw_parts) / "data.parquet", **kwargs).to_pandas()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--csmar-root", required=True)
@@ -51,12 +59,14 @@ def main() -> None:
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
 
     # ---------------------------------------------------------------- 面板
-    table = pq.read_table(
-        csmar / "行情" / "TRD_Dalyr" / "data.parquet",
+    bars = _read_ref_or_raw(
+        data_root,
+        csmar,
+        ("行情", "TRD_Dalyr"),
+        "TRD_Dalyr",
         columns=COLUMNS,
         filters=[("Trddt", ">=", start.date().isoformat()), ("Trddt", "<=", end.date().isoformat())],
     )
-    bars = table.to_pandas()
     bars["code"] = _code(bars["Stkcd"])
     bars = bars.loc[bars["code"].map(_in_universe)].copy()
     panel = bars.rename(
@@ -158,18 +168,23 @@ def main() -> None:
     st_codes: set[str] = set()
     st_vintage: str | None = None
     if trend_path.exists():
-        trend = pd.read_parquet(trend_path, columns=["Symbol", "ShortName", "TradingDate"])
+        trend = _read_ref_or_raw(
+            data_root, csmar, ("行情", "TRD_StockTrend"), "TRD_StockTrend",
+            columns=["Symbol", "ShortName", "TradingDate"],
+        )
         trend["code"] = _code(trend["Symbol"])
         trend = trend.loc[trend["code"].isin(set(universe))].rename(
             columns={"ShortName": "name", "TradingDate": "trade_date"}
         )
-        st_vintage = pd.to_datetime(trend["trade_date"]).max().strftime("%Y-%m-%d")
-        st_events = st_events_from_names(trend, vintage_date=st_vintage)
-        events.extend(st_events)
-        st_events_daily = len(st_events)
-        st_codes = {e["code"] for e in st_events if e["event"] == "st_on"}
-    else:
-        # 兜底：年度派生史（2019–2025），粒度到年
+        trend = trend.loc[pd.to_datetime(trend["trade_date"]) <= end]
+        if not trend.empty and pd.to_datetime(trend["trade_date"]).notna().any():
+            st_vintage = pd.to_datetime(trend["trade_date"]).max().strftime("%Y-%m-%d")
+            st_events = st_events_from_names(trend, vintage_date=st_vintage)
+            events.extend(st_events)
+            st_events_daily = len(st_events)
+            st_codes = {e["code"] for e in st_events if e["event"] == "st_on"}
+    if st_events_daily == 0:
+        # 兜底：年度派生史（2019–2025）；窗口早于 2016 时两者都没有，ST 记 unknown
         st_hist_path = data_root / "ref" / "csmar" / "DERIVED_st_history.parquet"
         if st_hist_path.exists():
             hist = pd.read_parquet(st_hist_path)
@@ -180,12 +195,16 @@ def main() -> None:
                 prev_state: bool | None = None
                 for row in grp.itertuples(index=False):
                     cur = bool(row.is_st)
+                    effective = pd.Timestamp(row.EndDate) + pd.Timedelta(days=1)
+                    if effective > end:
+                        prev_state = cur
+                        continue
                     if prev_state is None or cur != prev_state:
                         events.append(
                             {
                                 "code": code,
                                 "event": "st_on" if cur else "st_off",
-                                "effective_date": (pd.Timestamp(row.EndDate) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                                "effective_date": effective.strftime("%Y-%m-%d"),
                                 "payload": {"proxy": True, "source": "annual_st_history"},
                             }
                         )
@@ -202,13 +221,21 @@ def main() -> None:
     (out / "security.json").write_text(json.dumps(security, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # ---------------------------------------------------------------- 复权因子
-    af = pd.read_parquet(csmar / "行情" / "TRD_AdjustFactor" / "data.parquet")
+    af = _read_ref_or_raw(data_root, csmar, ("行情", "TRD_AdjustFactor"), "TRD_AdjustFactor")
     af["code"] = _code(af["Symbol"])
     af["trade_date"] = pd.to_datetime(af["TradingDate"])
     af = af.loc[af["code"].isin(set(universe)) & af["CumulateBwardFactor"].notna()].copy()
     factors = af.sort_values(["code", "trade_date"])[["code", "trade_date", "CumulateBwardFactor"]].rename(
         columns={"CumulateBwardFactor": "factor"}
     )
+    # 长历史里 5 只股票的后复权因子会出现下降（CSMAR 原始数据异常）；不修复、直接剔除，交给 base_proxy
+    bad_factor_codes = sorted(
+        str(code)
+        for code, grp in factors.groupby("code", sort=True)
+        if (grp["factor"].diff() < -1e-12).any()
+    )
+    if bad_factor_codes:
+        factors = factors.loc[~factors["code"].isin(bad_factor_codes)].reset_index(drop=True)
     # 没有公司行动的代码：锚定 1.0（无事件 → 因子恒定，不会造成跳变）
     missing_factor = sorted(set(universe) - set(factors["code"]))
     if missing_factor:
@@ -260,14 +287,14 @@ def main() -> None:
     )
 
     # ---------------------------------------------------------------- 无涨跌幅限制日 / 停复牌
-    nl = pd.read_parquet(csmar / "行情" / "TRD_NoLimit" / "data.parquet")
+    nl = _read_ref_or_raw(data_root, csmar, ("行情", "TRD_NoLimit"), "TRD_NoLimit")
     nl["code"] = _code(nl["Symbol"])
     nl["trade_date"] = pd.to_datetime(nl["TradingDate"])
     nl = nl.loc[nl["trade_date"].between(start, end) & nl["code"].isin(set(universe))]
     nl = nl[["code", "trade_date"]].drop_duplicates().sort_values(["trade_date", "code"])
     nl.to_parquet(out / "no_limit.parquet", index=False)
 
-    ts = pd.read_parquet(csmar / "行情" / "TSR_Stkstat" / "data.parquet")
+    ts = _read_ref_or_raw(data_root, csmar, ("行情", "TSR_Stkstat"), "TSR_Stkstat")
     ts["code"] = _code(ts["Stkcd"])
     ts["start_date"] = pd.to_datetime(ts["Suspdate"], errors="coerce")
     ts["end_date"] = pd.to_datetime(ts["Resmdate"], errors="coerce")
@@ -278,6 +305,28 @@ def main() -> None:
     ]
     suspensions = ts[["code", "start_date", "end_date"]].drop_duplicates().sort_values(["start_date", "code"])
     suspensions.to_parquet(out / "suspensions.parquet", index=False)
+
+    # ---------------------------------------------------------------- 指数成分权重（IDX_Smprat）
+    idx_path = data_root / "ref" / "csmar" / "IDX_Smprat.parquet"
+    index_rows = 0
+    index_codes = 0
+    if idx_path.exists():
+        iw = pd.read_parquet(idx_path)
+        iw["index_code"] = iw["Indexcd"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
+        iw["trade_date"] = pd.to_datetime(iw["Enddt"], errors="coerce")
+        iw["code"] = _code(iw["Stkcd"])
+        iw = iw.loc[
+            iw["trade_date"].notna()
+            & (iw["trade_date"] >= start - pd.Timedelta(days=400))
+            & (iw["trade_date"] <= end)
+        ]
+        iw = iw.rename(columns={"Weight": "weight"})[["index_code", "trade_date", "code", "weight"]]
+        iw = iw.drop_duplicates(["index_code", "trade_date", "code"], keep="last").sort_values(
+            ["index_code", "trade_date", "code"]
+        )
+        iw.to_parquet(out / "index_weights.parquet", index=False)
+        index_rows = int(len(iw))
+        index_codes = int(iw["index_code"].nunique())
 
     # ---------------------------------------------------------------- 财务 PIT / 市值 / vintage 清单
     fin_path = data_root / "ref" / "financial" / "financial_pit.parquet"
@@ -327,7 +376,12 @@ def main() -> None:
         mc_min, mc_max = mc_full_min, mc_full_max
 
     def _fmt(value):
-        return None if value is None else pd.Timestamp(value).strftime("%Y-%m-%d")
+        if value is None:
+            return None
+        ts = pd.Timestamp(value)
+        if pd.isna(ts):
+            return None
+        return ts.strftime("%Y-%m-%d")
 
     vintages = {
         "panel": {"source": "csmar TRD_Dalyr", "rows": int(len(panel)), "min": _fmt(panel["trade_date"].min()), "max": _fmt(panel["trade_date"].max())},
@@ -338,6 +392,7 @@ def main() -> None:
         "industry": {"source": "industry_pit_sw", "rows": int(len(ind))},
         "financial": {"source": "financial_pit", "rows": financial_rows, "min": _fmt(fin_min), "max": _fmt(fin_max)},
         "market_cap": {"source": "market_cap", "rows": mc_rows, "min": _fmt(mc_min), "max": _fmt(mc_max)},
+        "index_weights": {"source": "IDX_Smprat", "rows": index_rows, "indices": index_codes},
         "no_limit": {"source": "TRD_NoLimit", "rows": int(len(nl))},
         "suspensions": {"source": "TSR_Stkstat", "intervals": int(len(suspensions))},
     }
@@ -356,6 +411,9 @@ def main() -> None:
         "financial_rows": financial_rows,
         "market_cap_rows": mc_rows,
         "factor_rows": int(len(factors)),
+        "factor_dropped_nonmonotonic": len(bad_factor_codes),
+        "index_rows": index_rows,
+        "index_codes": index_codes,
         "no_limit_rows": int(len(nl)),
         "suspension_intervals": int(len(suspensions)),
     }
