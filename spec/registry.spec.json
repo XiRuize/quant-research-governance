@@ -1,0 +1,216 @@
+{
+  "spec_version": "1.0.2",
+  "status": "locked",
+  "effective_from": "2026-11-21",
+  "scope": "数据集登记。定义『一个数据集要交代清楚哪些事』、四张旧表如何合并，以及 run 产出物被跨 run 引用时的反查手段。",
+  "design_principle": "一条数据集 = 一条记录，主键唯一，分母唯一。源（source）不是数据集，保留为字典被引用，不平铺。",
+  "single_file": {
+    "path": "量化研究/数据源/data/datasets.json",
+    "schema_version": "2",
+    "root": "数据源/（所有 path 相对此目录）",
+    "why_one_file": "旧体系四张表的分母分别是 67 / 128 / 36 / 14，彼此不互指，没有任何主键约束，于是 68 个数据集在 catalog 里查不到、lineage 只覆盖 23%、5 个 CSV 被 parquet 探针误报 error。合并后分母固定为 datasets[] 的长度，一致性可以机械校验。",
+    "why_sources_not_flattened": "一个源对应多个数据集（csmar 一源撑 30+ 数据集）。把源状态平铺进每条记录，改一处要改 128 处，等于制造新的口径分裂。"
+  },
+  "structure": {
+    "schema_version": "整数，本契约为 2",
+    "generated_at": "ISO8601，生成时间",
+    "sources": "对象字典：source_id → 源定义（见 sources_contract）",
+    "datasets": "数组：每条见 dataset_contract",
+    "index": "派生索引（可选）：by_status / by_source / orphan 清单，供快速查询，不作为事实来源",
+    "caliber_overrides": "spec/dataset_caliber.json：口径覆盖表（id → caliber + caveats）。caliber 属于治理层、需人判断，不随 datasets.json 重生而丢失；load_registry() 读取时覆盖进 datasets[].caliber 并记 caliber_source。"
+  },
+  "sources_contract": {
+    "note": "源的字典，被 datasets[].lineage[].source_id 引用。",
+    "required": [
+      "id",
+      "name",
+      "type",
+      "tier",
+      "status"
+    ],
+    "fields": {
+      "id": "小写蛇形，全局唯一",
+      "name": "中文名",
+      "upstream": "上游 URL / 文件位置",
+      "type": "http_api | local_app | parquet | commercial_sdk | archive | self_hosted",
+      "tier": "DQ1（官方）| DQ2（付费终端）| DQ3（第三方/自采）",
+      "status": "ACTIVE | PLANNED | FROZEN | BLOCKED | DEPRECATED",
+      "status_reason": "为什么是这个状态，要能复现判断",
+      "adapter": "读取入口：脚本路径或 SDK 调用方式",
+      "next": "恢复/推进动作"
+    },
+    "known_sources": 14
+  },
+  "dataset_contract": {
+    "primary_key": "id",
+    "required": [
+      "id",
+      "path",
+      "kind",
+      "status",
+      "lineage"
+    ],
+    "runtime_derived": {
+      "note": "**物理事实不入档**。行数、字段列表、体积、覆盖率由 `qrg data stat <id>` 现场算，不写进 datasets.json。",
+      "why": "静态快照必然过期。catalog.json 就是证据：67 条里 5 条挂着 error 残留、gaps 写着已被推翻的结论，而没人重扫。把可重算的事实固化成文件，等于给它设了保质期。",
+      "fields": "exists / rows / n_fields / file_mb / coverage.start / coverage.end —— 只出现在 data stat 的输出里",
+      "exception": "`coverage` 若来自人工确认的历史口径（不是当场扫出来的），可以写进档；须在 note 里说明来源"
+    },
+    "fields": {
+      "id": "小写蛇形，全局唯一，与旧 views.name / catalog.name / lineage.view 对齐",
+      "path": "相对 数据源/ 的路径。**路径只在这里存一份**，sources 不再复制",
+      "format": "parquet | csv | json | zip",
+      "kind": "dataset | dimension | panel | event_table",
+      "frequency": "daily | weekly | monthly | quarterly | annual | event | snapshot",
+      "caliber": "口径一句话：这张表能回答什么问题。**必填**，空值即视为未登记完成",
+      "status": "见 cleaning.spec.json → data_status_enum 的 8 档",
+      "status_reason": "为什么是这个状态",
+      "coverage": "对象：start / end / n_rows / n_codes（能测多少测多少，测不了写 null 不写估计）",
+      "physical": {
+        "note": "**已移出档**，见 runtime_derived。此键仅为向后兼容保留说明，不再要求存在。",
+        "fields": "exists / rows / n_fields / file_mb / hash / field_list —— 由 qrg data stat 输出"
+      },
+      "pit": {
+        "note": "时点锚，PIT 纪律的落点",
+        "fields": "anchor（NOTICE_DATE / effective_from / trade_date / 快照日）/ lag_median_days / coverage"
+      },
+      "lineage": {
+        "note": "数组：这张表从哪来",
+        "item_required": [
+          "source_id",
+          "evidence",
+          "certainty"
+        ],
+        "item_fields": {
+          "source_id": "指 sources 字典的 key。**certainty=unknown 时必须为 null**，不许编造",
+          "raw_tables": "上游原始表名列表（如 TRD_Dalyr）。**不自动推断**：一个源常挂十几张原始表，无法判定喂给了哪个数据集，硬挂会造假血缘",
+          "evidence": "怎么确认的：脚本名、行数比对、哈希、或命中的推断规则名",
+          "certainty": "exact（路径精确命中）| inferred（按前缀规则推断）| unknown（未经证实）"
+        }
+      },
+      "gaps": {
+        "note": "数组；每条必须带 verified_at，否则视为未验证的传闻",
+        "item_required": [
+          "text",
+          "verified_at"
+        ],
+        "item_fields": {
+          "text": "缺口描述，必须具体到字段或区间",
+          "verified_at": "YYYY-MM-DD，最后一次实测日期",
+          "impact": "对什么研究有影响",
+          "action": "补采 / 降级 / 不用"
+        }
+      },
+      "consumers": {
+        "note": "谁在用这张表。解决『run 与数据集没有任何一张表记录绑定关系』，这是 daily_ext.parquet 差点被误删的根因（235MB 住在 BEAR run 下、被 FREQ/UNI 跨引，却不在任何登记表里）",
+        "format": "数组，元素为 run_id",
+        "semantics": "**现场扫描结果**。scan_consumers() 扫 research/*/runs/*/ 的 run.json 与 .py/.md，按『相对路径』与『文件名(≥8字符)』匹配。datasets.json 里的值是缓存，`qrg data consumers` 增量刷新，`qrg data stat` 每次重扫。",
+        "why_not_snapshot": "会随新 run 增加而过期。存静态快照就是重演 catalog.json 的命运。",
+        "rule": "被 ≥1 个 run 引用且 status=FROZEN 的，视为冻结依赖，改动需先解绑"
+      },
+      "artifacts_role": "canonical | derived | orphan。四件套必须至少有一个 canonical；同名文件多份副本时只允许一个 canonical",
+      "verified_at": "YYYY-MM-DD，本条记录最后一次人工/脚本核对"
+    }
+  },
+  "migration_from_legacy_tables": {
+    "status": "executed 2026-11-21",
+    "old_files": [
+      "数据源/data/catalog.json（67，物理扫描，已停更）",
+      "数据源/data/views.json（128，手工台账，最全）",
+      "数据源/data/lineage.json（36，家谱，覆盖 23%）",
+      "数据源/sources.json（14，源）"
+    ],
+    "method": "以 views 的 128 条为基准建 datasets[]；追加 catalog 独有的 7 条；物理事实一律不继承（改由 data stat 现场算），但 pit_anchor / refresh / fetch_script 作为口径保留；sources 原样进 sources 字典，其 datasets 字段改名 declared_datasets。",
+    "lineage_method": "lineage.json 的 source_kind 记的是 migration/collected/derived/ingest（来源方式）而不是 source_id，**该表不能当血缘用**。实际血缘靠 sources[].datasets 的路径反查：精确命中记 exact，按 PATH_PREFIX_RULES 推断记 inferred，都不中记 unknown（source_id=null）。",
+    "actual_counts": {
+      "datasets": 135,
+      "sources": 14,
+      "from_views": 128,
+      "from_catalog_only": 7,
+      "certainty_exact": 42,
+      "certainty_inferred": 82,
+      "certainty_unknown": 11,
+      "lineage_coverage_pct": 92
+    },
+    "orphan_handling": "catalog 独有的 7 条没有 caliber，status 置 DERIVED 并标 status_reason='catalog 独有条目，views 未登记，口径待补'；`qrg data check` 会持续报这 7 条 warn 直到补上。",
+    "legacy_files_after": "四张旧表已移入 数据源/data/_superseded/2026-11-21/（附 README 说明替代关系与已修缺陷），不再被任何脚本写入。原 `scripts/register_*.py` 三个登记脚本移入 scripts/_deprecated/。"
+  },
+  "check_rules": {
+    "note": "由 `qrg data check` 执行。fatal 使退出码为 5，warn 只报告。",
+    "fatal": [
+      "datasets[].id 重复",
+      "datasets[].path 文件不存在且 status ∈ {AVAILABLE, DERIVED, STALE, SNAPSHOT_ONLY}",
+      "lineage[].source_id 非 null 且不在 sources 字典内",
+      "lineage[].certainty=unknown 时 source_id 必须为 null（不许编造源）",
+      "status 不在 8 档枚举内",
+      "kind 不在 dataset/dimension/panel/event_table 内",
+      "记录缺 id / path / kind / status / lineage"
+    ],
+    "warn": [
+      "caliber 为空（字符串须非空，对象须非空）",
+      "gaps[].verified_at 距今超过 180 天",
+      "gaps[] 缺 verified_at",
+      "status=FROZEN 但 consumers 为空（无人使用的冻结数据应评估下线）",
+      "同一 path 出现两条记录"
+    ],
+    "regression": [
+      "datasets 总数相对上次生成下降（可能误删登记）",
+      "任一 source 的 status 从 ACTIVE 变为其它而未写 status_reason"
+    ],
+    "not_checked_here": "物理事实（行数/体积/字段）不校验，因为不入档；查这些用 qrg data stat，查质量问题用 qrg data lint",
+    "info": [
+      "`qrg data orphans` 发现的跨 run 隐式依赖：应评估提升为 数据源/ 正式数据集；不提升则至少建档"
+    ]
+  },
+  "known_defects_to_fix_during_merge": [
+    {
+      "id": "D1",
+      "defect": "5 个 CSV 条目带 error='Parquet magic bytes not found in footer'",
+      "cause": "扫描器用 parquet 读器探测 csv 文件",
+      "affected": [
+        "ic_monthly",
+        "corr_matrix_monthly",
+        "ic_table",
+        "step5_nav_ref",
+        "futures_brent_daily"
+      ],
+      "fix": "按 format 分派读器；csv 用行数统计，不探 parquet footer"
+    },
+    {
+      "id": "D2",
+      "defect": "ic_monthly 的 gaps 写着『财务 PIT 不可用（announce_date 87% 滞后 >12 月）』",
+      "cause": "该结论只对 yjbb 成立，被跨表套用到 financial_pit",
+      "fix": "删除该 gap；financial_pit 的 status 按 registry 实测置 AVAILABLE"
+    },
+    {
+      "id": "D3",
+      "defect": "catalog 67 条 vs views 128 条，68 条 views 未被 catalog 收录",
+      "cause": "build_catalog.py 依赖 qm_paths.repo_root()，指向的 未来/金融智能体 已不存在",
+      "fix": "扫描逻辑移入 qrg.registry.probe()，不再依赖任何死路径；但**不再生成静态快照**，改为 `qrg data stat <id>` 按需现场探测"
+    }
+  ],
+  "provenance": {
+    "evidence": "对 数据源/data/*.json 与 sources.json 的穷举核对（2026-11-21）",
+    "related": [
+      "spec/cleaning.spec.json",
+      "spec/run.spec.json",
+      "paradigms/INDEX.md"
+    ],
+    "updated_at": "2026-11-21",
+    "changelog": [
+      "1.0.1 (2026-11-21): consumers 改为现场扫描+缓存语义；新增 spec/dataset_caliber.json 口径覆盖；新增 commands 段（init/check/list/stat/consumers/refs/orphans/lint）；迁移支持从 _superseded 归档副本重跑。"
+    ]
+  },
+  "commands": {
+    "qrg data init --from-legacy": "一次性迁移：合并旧四表生成 datasets.json。可重复执行（幂等），旧表已归档到 data/_superseded/2026-11-21/ 时自动读归档副本。",
+    "qrg data check": "按本契约 check_rules 校验，0 fatal 才算通过。",
+    "qrg data list": "列出已登记数据集（id / status / kind / path）。",
+    "qrg data stat <id>": "现场探测物理事实（行数/体积/字段/覆盖期），不落盘；并显示 consumers（重扫）与 gaps。替代已删除的 catalog.json。",
+    "qrg data consumers": "增量重扫 consumers 并写回，不动其余字段。",
+    "qrg data refs <target>": "谁引用了某个文件（run 或 scripts）。**删除任何文件前必查**。",
+    "qrg data orphans": "跨 run 隐式依赖：某 run 在 02_data/03_out 的产出物被其他 run 引用。这类文件不在 datasets.json 里，删了不报错、只会在下游下一轮炸掉。",
+    "qrg data lint": "按范式卡 P01–P11 体检数据集（见 lint.py）。",
+    "qrg data add --id ... --path ...": "追加一条数据集登记。归档 register_dataset.py 之后的**唯一合法登记入口**：校验 id 唯一、status/kind 在枚举内、文件是否存在，写回后按 id 排序。",
+    "qrg run check": "按 run.spec.json check_rules 检查 research/<family>/runs/ 下全部 run：schema=qrg-run-v1 强制 12 必填字段（fatal），legacy 门只强制 run_id（其余缺失 warn）；caliber 须在 caliber_registry 登记或带 custom_ 前缀（允许「登记键+分隔符+说明后缀」形态）；verdict.code 须 UPPER_SNAKE 且词根可拆；另查 README/07_deliver 结论页与语义目录形态。实现：src/qrg/run_check.py（发现到无 run.json 的目录即 fatal RUN_JSON_MISSING）。"
+  }
+}

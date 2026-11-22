@@ -1,0 +1,133 @@
+{
+  "spec_version": "v1.0-locked",
+  "locked_at": "2026-10-31T16:05:00+08:00",
+  "locked_by": "P0 数据清洗契约（本轮）",
+  "config_source": "thresholds.json@dff71ca9",
+  "time_split_id": "TS-20261030-B",
+  "note": "阈值只给键名，取值一律读 thresholds.json；本文件锁定的是【口径与规则】，不是数值。任何口径变更须升 spec_version 并登记 trial_registry。",
+
+  "hard_validation": {
+    "rules": ["primary_key_dup", "high_lt_low", "price_le_zero", "negative_volume", "code_not_6_digit_ashare"],
+    "code_whitelist": "沪深 A 股 6 位（60/68/00/30）+ 北交所 8/4/920 单独标记；非 6 位幽灵码一律剔除（数据层，非研究层）",
+    "violation_rate_max_key": "hard_validation_violation_rate_max",
+    "violation_rate_fatal_key": "hard_validation_violation_rate_fatal",
+    "on_fail": "超 max → L2（当日截面暂停）；超 fatal → BLOCKED_FROM_FINAL"
+  },
+
+  "price_adjustment": {
+    "storage": "raw 价 + 逐日 factor；禁止只存前复权价",
+    "factor_definition": "factor = close_hfq / close_raw（上市累计、非递减、除权除息处跳变）",
+    "any_base_rule": "adj(b) = close_raw × factor / factor[b]",
+    "qfq_base_date": "2026-07-31",
+    "qfq_base_reason": "与既有 daily_factors 的复权基准对齐，保证历史结论可对比",
+    "reproduction_tolerance": "推导 qfq vs 既有 qfq，中位相对误差 ≤ 1e-3（实测 600519 = 2.1e-6）",
+    "splice_rule": "跨源拼接（new_bars 不复权）必须先乘 factor 归一到同一基准，否则禁止拼价格水平",
+    "adj_jump_rule": "|return| > 板块涨跌停幅度 + 2pp 计为 adj_jump（阈值不内联，见 hard_validation）"
+  },
+
+  "outlier": {
+    "method": "MAD_two_layer",
+    "mad_k_key": "mad_k",
+    "fallback": "IQR（MAD=0 时）",
+    "small_sample_key": "small_sample_n",
+    "small_sample_action": "只标记不缩尾",
+    "neutralization": "仅 申万一级哑变量 + log(总市值)；R² > 0.8 标 high_collinearity",
+    "neutralization_proxy": "总市值缺失期用 log(流通市值) 代理，须标 proxy 并披露（当前为常态）"
+  },
+
+  "missing": {
+    "rate_threshold_key": "missing_rate_percentile",
+    "proxy_rule": "禁止 proxy 填充；缺失即 NaN",
+    "grid_rule": "所有面板必须网格化到（交易日 × 在册股票）；停牌日显式 suspended=true 且数值段 NaN",
+    "no_implicit_fill": "禁止 ffill / 隐式 join 补齐；缺失行必须能被下游区分" 
+  },
+
+  "suspension_delisting": {
+    "delist_stop_days_key": "delist_stop_days",
+    "relist_wait_days_key": "relist_wait_days",
+    "delist_residual_key": "delist_residual",
+    "delist_list_status": "stock_basic.LISTING_STATE 为 2026-10-31 快照 → 只能标 PARTIAL，不得宣称已处理幸存者",
+    "suspension_representation": "旧数据以行缺失表达停牌（每股中位 2,289/2,428 天）→ 必须重建网格后才能判 G2"
+  },
+
+  "limit_and_st": {
+    "board_limits": { "main": 0.10, "star_chinext": 0.20, "bse": 0.30, "st": 0.05 },
+    "st_status": "UNAVAILABLE（无 ST 名单）→ 涉及 ST 的涨停识别标 UNKNOWN，不得当作 10% 处理",
+    "new_listing_rule": "注册制新股上市前 5 日无涨跌幅 → 不计入 adj_jump 违规",
+    "locked_rule": "high==low 且封在限价 → limit_up_locked / limit_down_locked，当日不可买卖",
+    "portfolio_rule": "组合构建必须剔除信号日锁定票，否则回测结果作废（invalid_execution）"
+  },
+
+  "financial_pit": {
+    "anchor": "NOTICE_DATE ≤ trade_date；盘后（>15:00）顺延 T+1",
+    "coverage_min_key": "announce_coverage_min",
+    "restatement": "重述取 as-of 保守值",
+    "long_lag_rule": "滞后 > 365 天（实测 4.38% / 12,415 行）→ 用法定截止保守锚（report_period + 90 天）并标 is_proxy=true、权重 8 折",
+    "status": "AVAILABLE（283,498 行，NOTICE_DATE 覆盖 100%，中位滞后 57 天）"
+  },
+
+  "industry_pit": {
+    "requirement": "必须有 classification_version + vendor_vintage_date",
+    "status": "UNAVAILABLE（仅 stock_basic 快照；panel.industry_name 跨月变动 = 0 → 前视指纹）",
+    "action": "行业中性化/行业因子在补齐前一律 UNKNOWN，不得入模；历史段结论须标『行业快照前视』"
+  },
+
+  "dynamic_threshold_asof": {
+    "window_end_key": "cleaning_threshold_window_end",
+    "must_be_within_train": true,
+    "val_holdout": "冻结，不得重估",
+    "violation": "越界 → BLOCKED_FROM_FINAL"
+  },
+
+  "trial_registry_required": true,
+
+  "conflict_rulings": [
+    { "id": "C1", "topic": "复权口径", "old": "存 qfq 价 + v_adjust 因子", "new": "只存 qfq 价", "ruling": "存 raw + factor，qfq 派生", "stricter": "old+new(合并)", "status": "本轮实施" },
+    { "id": "C2", "topic": "幽灵代码", "old": "研究层过滤", "new": "数据层已剔", "ruling": "数据层 6 位白名单", "stricter": "new", "status": "已满足" },
+    { "id": "C3", "topic": "停牌", "old": "未登记", "new": "行缺失", "ruling": "网格化 + 显式 suspended + NaN", "stricter": "new(加强)", "status": "待实施" },
+    { "id": "C4", "topic": "涨跌停", "old": "10/20/30 + v_limit_stats", "new": "10/20/30，无 ST", "ruling": "加 ST 5% + 新股无限制", "stricter": "old+修正", "status": "待实施" },
+    { "id": "C5", "topic": "财务 PIT", "old": "纠错 + 保守锚", "new": "NOTICE_DATE + 覆盖率门", "ruling": "两者并用", "stricter": "合并", "status": "待实施" },
+    { "id": "C6", "topic": "行业", "old": "v_industry 生效日 PIT", "new": "静态快照", "ruling": "PIT 必填，缺则 UNKNOWN", "stricter": "old", "status": "待补数据" },
+    { "id": "C7", "topic": "退市", "old": "无名单 UNKNOWN", "new": "快照名单", "ruling": "快照核对 + PARTIAL", "stricter": "new(部分)", "status": "已满足(PARTIAL)" },
+    { "id": "C8", "topic": "市值", "old": "v_marketcap 总市值", "new": "仅 circ_share", "ruling": "总市值；缺期 proxy 披露", "stricter": "old", "status": "待补数据" },
+    { "id": "C9", "topic": "日历", "old": "v_calendar", "new": "无", "ruling": "建日历并交叉校验", "stricter": "old", "status": "待实施" },
+    { "id": "C10", "topic": "指数基准", "old": "v_index_daily 6 指数", "new": "无", "ruling": "补齐 6 指数", "stricter": "old", "status": "待补数据" },
+    { "id": "C11", "topic": "两融/龙虎榜 PIT", "old": "滞后 1 日；D1..D30 禁用", "new": "同", "ruling": "一致，保持", "stricter": "一致", "status": "已满足" },
+    { "id": "C12", "topic": "试验登记/指纹", "old": "无", "new": "trial_registry + 指纹", "ruling": "沿用新体系", "stricter": "new", "status": "已满足" }
+  ],
+
+  "field_availability": {
+    "close_raw": { "status": "AVAILABLE", "source": "sina raw", "use": "可入模" },
+    "close_qfq": { "status": "DERIVED", "source": "raw × factor / factor[2026-07-31]", "use": "可入模（须标基准日）" },
+    "adjust_factor": { "status": "PARTIAL", "source": "sina raw+hfq（逐股）+ 事件法增量", "coverage": "冻结窗口用既有 qfq（自洽，2.1e-6 反证）；2026-08 之后用 splice_events（877 事件/857 只，反验 4.7e-05）", "use": "冻结窗口 + 拼接窗口可用；任意基准复权重算仍需 DQ2 全量因子" },
+    "volume": { "status": "AVAILABLE", "use": "可入模" },
+    "amount": { "status": "AVAILABLE", "use": "可入模" },
+    "circ_share": { "status": "AVAILABLE", "use": "可入模（流通口径）" },
+    "total_mv": { "status": "AVAILABLE", "source": "data/ref/market_cap/market_cap.parquet（东财 stock_value_em，日频）", "coverage": "5,215 只 / 2018-01..2026-10；125 只缺失", "use": "铁律 6 的 log(总市值) 中性化；proxy（流通市值）不再作为默认口径" },
+    "industry_pit": { "status": "AVAILABLE", "source": "data/ref/industry/industry_pit_sw.parquet（SW2021，生效日 PIT）", "coverage": "月末截面 99.97%", "use": "as-of 生效日可用；旧行业代码无名称的样本标 UNKNOWN" },
+    "st_status": { "status": "SNAPSHOT_ONLY", "source": "data/ref/st/st_status.parquet（794 只 ST，快照 2026-10-31）", "use": "当前截面 ±5% 限价识别可用；历史 ST 禁止回填，须标 UNKNOWN" },
+    "financial_pit": { "status": "AVAILABLE", "caveat": "长滞后 4.38% 走保守锚", "use": "可入模（分档）" },
+    "margin_daily": { "status": "STALE", "coverage_end": "2025-07-31", "use": "2025-08 之后 UNKNOWN" },
+    "lhb_daily": { "status": "STALE", "coverage_end": "2025-07-31", "use": "2025-08 之后 UNKNOWN；D1..D30 禁用" },
+    "st_status": { "status": "UNAVAILABLE", "use": "ST 涨停识别 UNKNOWN" },
+    "index_daily": { "status": "AVAILABLE", "source": "data/ref/index/index_daily.parquet（6 指数）", "use": "基准腿可用（价格指数，不含分红）" },
+    "calendar": { "status": "AVAILABLE", "source": "data/ref/calendar/calendar.parquet（8,797 交易日 + 制度区间）", "use": "可入模（网格化与制度分段）" }
+  },
+
+  "artifacts_required": [
+    "data_clean_report.json",
+    "trading_flags.parquet",
+    "cleaning_sensitivity.json",
+    "data_quality_report.json"
+  ],
+
+  "provenance": {
+    "audit_doc": "量化研究/数据源/数据清洗目标与缺口审计.md",
+    "old_method_refs": [
+      "量化工作/已有数据资产/_基建/quantdata_pipeline/scripts/pull/pull_adjust_factor_all.py",
+      "量化工作/已有数据资产/_基建/quantdata_pipeline/docs/A4全链路数据审查报告.md",
+      "量化工作/已有数据资产/_基建/quantdata_pipeline/docs/财务announce_date纠错登记.md",
+      "量化工作/已有数据资产/_基建/quantdata_pipeline/docs/行业历史PIT数据补全登记.md"
+    ]
+  }
+}

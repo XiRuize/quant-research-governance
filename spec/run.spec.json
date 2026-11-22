@@ -1,0 +1,145 @@
+{
+  "spec_version": "1.0.0",
+  "status": "locked",
+  "effective_from": "2026-11-21",
+  "scope": "研究轮次（run）的归档结构与 run.json 字段。只管『产物怎么放、结论怎么写』，不管『研究怎么做』。",
+
+  "design_principle": "最小必需集，不规定形态。目录分段是『语义槽位』不是『必填槽位』，run.json 是『必填槽位』。",
+  "why_not_seven_segments": "实测 74 个 run 目录有 22 种不同的顶层子目录组合，强制七段会破坏 40+ 个已有路径引用，且没有一个历史 run 是『为了少建目录』而做错的。错的是一半 run 没有可机读的结论字段。",
+
+  "required_layout": {
+    "must": [
+      "run.json",
+      "README.md 或 07_deliver/ 下任一 .md（一页结论，必须含 verdict 与已知局限）"
+    ],
+    "data_dir": "02_data/ 若该轮产生数据产物则必须存在；纯汇总轮（如口径重建）可只有 03_out/",
+    "forbidden": [
+      "在 run 根目录直接堆放 >20 个文件（应归入 02_data 或 03_out）",
+      "把中间件写进 07_deliver（交付层只放定稿）"
+    ]
+  },
+
+  "segment_vocabulary": {
+    "note": "固定语义，按需创建；不得自造不带序号的分段名。22 种历史变体中凡不符合本表的，一律标 shape_legacy。",
+    "00_anchor": "锚定物：复现所需的原始输入快照/哈希",
+    "01_spec": "预锁规格：SIGN、参数域、口径偏离声明",
+    "02_data": "数据与脚本：面板、四件套引用、脚本快照",
+    "03_diagnose": "诊断：IC 序列、相关性、回归、网格",
+    "03_out": "诊断的扁平替代（分析型 run 用，与 03_diagnose 二选一）",
+    "04_adjudicate": "裁决：多重比较校正、方向裁定",
+    "05_portfolio": "组合层：权重、换手、成本",
+    "06_backtest": "回测：选档、稳健性、容量",
+    "07_deliver": "交付：白皮书、审计链"
+  },
+
+  "run_json": {
+    "schema_field": "schema",
+    "schema_value_v1": "qrg-run-v1",
+    "legacy_rule": "无 schema 字段或 schema 不等于 qrg-run-v1 的，按 legacy 处理：只强制 run_id，其余字段缺失只报 warn 不报 fail。",
+    "required_v1": [
+      "run_id",
+      "schema",
+      "title",
+      "family",
+      "created_at",
+      "caliber",
+      "data",
+      "verdict",
+      "headline",
+      "artifacts",
+      "known_limitations",
+      "revisions"
+    ],
+    "field_contract": {
+      "run_id": "全局唯一，格式 <PREFIX>-<YYYYMMDD>-<NNN>[后缀]；PREFIX ∈ QM/UNI/BEAR/FREQ/CLN/CR/SDF",
+      "title": "一句话研究问题，不是结论。别名 question 可替代。",
+      "family": "research/ 下的族目录名，必须真实存在",
+      "created_at": "ISO8601 带时区",
+      "caliber": "口径标识。**必须显式声明成本口径**：gross / fixed_0.2pct_month / turnover_driven。跨 run 比 Sharpe 前先读这里。",
+      "data": "对象：source / window / n_dates / n_codes / pool_note。指向具体路径或数据集 id，不写『全市场数据』这类模糊表述",
+      "verdict": "对象：code（UPPER_SNAKE，机器可读）+ note（人读）。禁止只写『完成』『有效』",
+      "headline": "3–5 个关键数字，必须带单位与口径",
+      "artifacts": "对象：scripts[] / data[] / results[]，逐项给相对路径",
+      "known_limitations": "字符串数组，每条是一个可被判定的具体局限，不写『数据有限』",
+      "revisions": "对象数组：date / rev / change / impact。自我更正必须留痕，不得静默修改"
+    },
+    "aliases": {
+      "question": "title",
+      "status": "verdict.code 的补充态（COMPLETED/FAILED/PARTIAL）",
+      "corrections_issued": "revisions 的扁平替代（字符串数组）",
+      "outputs": "artifacts.results"
+    }
+  },
+
+  "verdict_vocabulary": {
+    "pattern": "^[A-Z][A-Z0-9_]{2,}$",
+    "rule": "verdict.code 必须匹配上式为 UPPER_SNAKE；组合式判定（如 CONDITIONAL_SURVIVED_CAPACITY_FAIL）允许，但必须能被 split 成已知词根",
+    "known_roots": [
+      "PASS", "FAIL", "FALSIFIED", "SURVIVED", "CONDITIONAL", "PRECHECK",
+      "NEGATIVE", "POSITIVE", "DEFERRED", "PARTIAL", "BLOCKED", "UNPRED",
+      "CAPACITY", "COMBO", "UNVERIFIED", "MIGRATED", "NOT_DOABLE", "WARN",
+      "CONFIRMED", "INCONCLUSIVE"
+    ]
+  },
+
+  "caliber_registry": {
+    "note": "口径不是自由文本。已知口径必须在此登记，跨 run 比较前先查此表。",
+    "entries": {
+      "gross": "不计成本，纯粹因子毛值",
+      "fixed_0.2pct_month": "固定 0.2%/月，历史默认口径。≈2.4%/年，不到真实成本一半 → 该口径下的 Sharpe 一律视为毛值",
+      "UNI-CALIBER-v1": "统一窗口 2018-01~2026-06，train60/val24/oos18，固定 0.2%/月",
+      "UNI-CALIBER-v2": "T+1 开盘 + 换手驱动成本（2.6bp 双边 + 5bp 印花 + 冲击 η=0.5），替代 v1",
+      "FREQ-GRID-v1": "继承 v2 成本与执行，加五频率 × 相位 × 带宽网格",
+      "EVAL-CALIBER-v2.2": "统一评估口径 v2.2（2026-11-21 立，research/registry/eval_caliber_v2.md）：1.3bp 单边佣金 + 5bp 印花 + 冲击 η=0.5，T+1 开盘，可执行宇宙（涨停禁买 + ADV 下限），分段对齐 UNI-CALIBER-v2，补 R3/R70 落地与分组前风格中性化。v2.1 因把买不到的股票留在持仓而虚高，其数值不得引用",
+      "fixed_single_side_30bps": "固定单边 30bp 成本口径（QM-20261102-001 及此前基线轮）。与 UNI-CALIBER-v2（换手驱动 + 冲击）不可直接互比，跨 run 比 Sharpe 前须换算",
+      "legacy_caliber": "旧体系（90_legacy）口径，未迁移到现行清洗体系，不得作为现行结论引用"
+    }
+  },
+
+  "check_rules": {
+    "fatal": [
+      "run.json 不存在",
+      "run_id 与目录名不一致",
+      "schema=qrg-run-v1 但缺任一 required_v1 字段",
+      "caliber 缺失或未在 caliber_registry 登记且未带 custom_ 前缀",
+      "verdict.code 不匹配 UPPER_SNAKE 模式"
+    ],
+    "warn": [
+      "legacy run 缺 verdict / headline",
+      "README.md 与 07_deliver 同时缺失",
+      "known_limitations 为空数组",
+      "顶层子目录名不在 segment_vocabulary 内（标 shape_legacy）"
+    ]
+  },
+
+  "migration_notes": {
+    "existing_runs": 74,
+    "with_run_json": 63,
+    "missing_run_json": 11,
+    "missing_run_json_list": [
+      "CLN-CSMAR-COMPARE", "CLN-CSMAR-DQ3", "CLN-CSMAR-DRET",
+      "CLN-CSMAR-NL-DQ3", "CLN-CSMAR-NL-DRET",
+      "QM-20261031-001", "QM-20261102-001", "QM-20261121-003S",
+      "CR-20261105-001", "QM-20261119-106", "QM-DEBUG"
+    ],
+    "distinct_shapes": 22,
+    "policy": "存量一律标 shape_legacy + legacy schema，不返工目录、不重排文件；只给 11 个缺 run.json 的补最小字段（run_id/title/family/created_at/caliber/verdict）。新 run 一律 qrg-run-v1。",
+    "field_coverage_evidence": {
+      "run_id": "63/63 = 100%",
+      "mode": "60/63 = 95.2%",
+      "schema": "57/63 = 90.5%",
+      "title": "46/63 = 73.0%",
+      "family": "45/63 = 71.4%",
+      "artifacts": "45/63 = 71.4%",
+      "caliber": "44/63 = 69.8%",
+      "verdict": "40/63 = 63.5%",
+      "created_at": "34/63 = 54.0%",
+      "note": "只有 run_id 达到 100%。字段名总数 200+，同义字段（title/question/research_question、artifacts/outputs）并存，故 v1 引入 aliases 而非重命名存量。"
+    }
+  },
+
+  "provenance": {
+    "evidence": "对 research/ 下 74 个 run 目录与 63 个 run.json 的穷举统计（2026-11-21）",
+    "related": ["spec/cleaning.spec.json", "spec/registry.spec.json", "research/迁移总控.md §6 交付规范"]
+  }
+}

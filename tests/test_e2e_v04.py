@@ -56,7 +56,8 @@ def test_clean_registers_trial_and_gate_verifies(capsys) -> None:
     assert len(ledger) == 1
     rec = json.loads(ledger[0])
     assert rec["run_id"] == "run-test-1"
-    assert rec["spec_version"] == "0.1.0"
+    expected = json.loads(SPEC.read_text(encoding="utf-8"))["spec_version"]
+    assert rec["spec_version"] == expected
 
     code = main(["gate", "--dir", str(d / "out")])
     gate_out = capsys.readouterr()

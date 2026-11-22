@@ -181,6 +181,78 @@ def build_parser() -> argparse.ArgumentParser:
     tail.add_argument("--scenarios", help="scenarios json（缺省用内置三情景）")
     tail.add_argument("--impact-rules", help="冲击模型规则 json")
     tail.add_argument("--returns", help="收益序列 csv，用于 bootstrap 尾部估计")
+
+    # ---- data：数据集登记与体检 ---------------------------------
+    run = sub.add_parser("run", help="研究轮次：结构与 run.json 校验")
+    rsub = run.add_subparsers(dest="run_command", required=True)
+    r_check = rsub.add_parser("check", help="按 run.spec.json 检查全部 run（v1 必填 / legacy 门）")
+    r_check.add_argument("--research", help="research 根目录，默认仓库同级 research/")
+    r_check.add_argument("--json", action="store_true", help="以 JSON 输出 findings")
+
+    data = sub.add_parser("data", help="数据集：登记、查询、现场探测、体检")
+    dsub = data.add_subparsers(dest="data_command", required=True)
+
+    d_init = dsub.add_parser("init", help="由旧四表生成 datasets.json（可重复执行，幂等）")
+    d_init.add_argument("--from-legacy", action="store_true", help="从 catalog/views/lineage/sources 合并")
+    d_init.add_argument("--data-root", help="数据集根，默认仓库同级 数据源/")
+    d_init.add_argument("--out", help="输出路径，默认 <data-root>/data/datasets.json")
+    d_init.add_argument("--dry-run", action="store_true", help="只报告将生成多少条，不写文件")
+
+    d_cons = dsub.add_parser(
+        "consumers", help="重扫「谁用了这张表」（增量刷新，不动其余字段）"
+    )
+    d_cons.add_argument("--registry", help="datasets.json 路径")
+    d_cons.add_argument("--data-root", help="数据集根，默认仓库同级 数据源/")
+    d_cons.add_argument("--dry-run", action="store_true", help="只报告差异，不写文件")
+
+    d_add = dsub.add_parser("add", help="追加一条数据集登记（唯一合法入口）")
+    d_add.add_argument("--id", required=True, dest="dataset_id", help="数据集 id（唯一）")
+    d_add.add_argument("--path", required=True, help="相对 数据源/ 的路径")
+    d_add.add_argument("--status", default="AVAILABLE", help="8 档状态之一")
+    d_add.add_argument("--kind", default="dataset", help="dataset / dimension / panel / event_table")
+    d_add.add_argument("--caliber", default="", help="这张表能回答什么问题")
+    d_add.add_argument("--source", help="源 id（须在 sources 字典内）")
+    d_add.add_argument("--certainty", default="unknown", help="exact / inferred / unknown")
+    d_add.add_argument("--gap", action="append", help="已知缺口，可重复")
+    d_add.add_argument("--registry", help="datasets.json 路径")
+    d_add.add_argument("--data-root", help="数据集根，默认仓库同级 数据源/")
+    d_add.add_argument("--dry-run", action="store_true", help="只校验不写")
+
+    d_refs = dsub.add_parser("refs", help="谁引用了某个文件（删前必查）")
+    d_refs.add_argument("target", help="相对路径、绝对路径或文件名")
+    d_refs.add_argument("--data-root", help="数据集根，默认仓库同级 数据源/")
+
+    d_orph = dsub.add_parser(
+        "orphans", help="跨 run 隐式依赖：某 run 产出物被其他 run 引用"
+    )
+    d_orph.add_argument("--data-root", help="数据集根，默认仓库同级 数据源/")
+    d_orph.add_argument("--json", action="store_true", dest="as_json")
+
+    d_list = dsub.add_parser("list", help="列出已登记数据集")
+    d_list.add_argument("--filter", help="按 id 子串过滤")
+    d_list.add_argument("--status", help="按 status 过滤")
+    d_list.add_argument("--registry", help="datasets.json 路径")
+
+    d_stat = dsub.add_parser("stat", help="现场探测一个数据集（不落盘）")
+    d_stat.add_argument("id", help="数据集 id")
+    d_stat.add_argument("--registry", help="datasets.json 路径")
+    d_stat.add_argument("--fast", action="store_true", help="跳过覆盖期统计（大表提速）")
+    d_stat.add_argument("--json", action="store_true", dest="as_json")
+
+    d_lint = dsub.add_parser("lint", help="按范式卡 P01–P11 体检数据集")
+    d_lint.add_argument("--ids", nargs="*", help="指定数据集 id；缺省全量")
+    d_lint.add_argument("--filter", help="按 id 子串过滤")
+    d_lint.add_argument("--registry", help="datasets.json 路径")
+    d_lint.add_argument("--level", choices=["fatal", "warn", "info"], default="warn")
+    d_lint.add_argument("--max-rows", type=int, default=4_000_000, help="单表采样上限")
+    d_lint.add_argument("--json", action="store_true", dest="as_json")
+    d_lint.add_argument("--fail-on", choices=["fatal", "warn", "none"], default="fatal",
+                        help="退出码策略：fatal=有 fatal 则 5；warn=有 warn 则 5；none=恒 0")
+
+    d_check = dsub.add_parser("check", help="校验登记表（主键/路径/schema/枚举）")
+    d_check.add_argument("--registry", help="datasets.json 路径")
+    d_check.add_argument("--no-verify-paths", action="store_true", help="跳过文件存在性检查")
+    d_check.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -544,6 +616,319 @@ def cmd_gate(args: argparse.Namespace) -> int:
     return 0 if manifest_ok and status != "blocked" else 3
 
 
+def cmd_data_init(args: argparse.Namespace) -> int:
+    from .registry import RegistryError, build_from_legacy, default_data_root, default_registry_path
+
+    if not args.from_legacy:
+        print("目前只支持 --from-legacy（从 catalog/views/lineage/sources 合并）", file=sys.stderr)
+        return 4
+    root = Path(args.data_root) if args.data_root else default_data_root()
+    try:
+        obj = build_from_legacy(root)
+    except RegistryError as exc:
+        print(f"合并失败: {exc}", file=sys.stderr)
+        return 4
+
+    ds = obj["datasets"]
+    by_status: dict[str, int] = {}
+    for d in ds:
+        by_status[d["status"]] = by_status.get(d["status"], 0) + 1
+    by_cert: dict[str, int] = {}
+    for d in ds:
+        for e in d.get("lineage") or []:
+            by_cert[e.get("certainty", "?")] = by_cert.get(e.get("certainty", "?"), 0) + 1
+
+    out = Path(args.out) if args.out else default_registry_path(root)
+    print(f"数据集 {len(ds)} 条 | 源 {len(obj['sources'])} 条")
+    print("status 分布: " + ", ".join(f"{k}={v}" for k, v in sorted(by_status.items())))
+    print("血缘 certainty: " + ", ".join(f"{k}={v}" for k, v in sorted(by_cert.items())))
+    if args.dry_run:
+        print(f"[dry-run] 未写文件；目标 {out}")
+        return 0
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(obj, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(f"已写入 {out}")
+    return 0
+
+
+def cmd_data_add(args: argparse.Namespace) -> int:
+    from .registry import RegistryError, add_dataset
+
+    try:
+        res = add_dataset(
+            args.registry,
+            dataset_id=args.dataset_id,
+            path=args.path,
+            status=args.status,
+            kind=args.kind,
+            caliber=args.caliber,
+            source_id=args.source,
+            certainty=args.certainty,
+            gaps=args.gap,
+            data_root=args.data_root,
+            dry_run=args.dry_run,
+        )
+    except RegistryError as exc:
+        print(f"登记失败: {exc}", file=sys.stderr)
+        return 4
+
+    print(f"已登记 {args.dataset_id}（共 {res['total']} 条）")
+    if not res["file_exists"]:
+        print(f"  注意：文件 {args.path} 在磁盘上不存在；status={args.status} 会因此判 fatal", file=sys.stderr)
+    if not args.caliber:
+        print("  注意：caliber 为空，qrg data check 会报 warn", file=sys.stderr)
+    if args.dry_run:
+        print("[dry-run] 未写文件")
+    else:
+        print("  下一步：qrg data check 确认 0 fatal")
+    return 0
+
+
+def cmd_data_refs(args: argparse.Namespace) -> int:
+    from .registry import find_references
+
+    hits = find_references(args.target, args.data_root)
+    if not hits:
+        print(f"没有任何 run 或脚本引用 {args.target}")
+        print("（这不等于可以删：可能是拼路径读的，先人工确认）")
+        return 0
+    print(f"{len(hits)} 处引用 {args.target}：")
+    for h in hits:
+        tag = "run   " if h["kind"] == "run" else "script"
+        print(f"  [{tag}] {h['where']}")
+    return 0
+
+
+def cmd_data_orphans(args: argparse.Namespace) -> int:
+    from .registry import cross_run_artifacts
+
+    arts = cross_run_artifacts(args.data_root)
+    if args.as_json:
+        print(json.dumps(arts, ensure_ascii=False, indent=1))
+        return 0
+    if not arts:
+        print("没有跨 run 隐式依赖。")
+        return 0
+    print(f"跨 run 隐式依赖 {len(arts)} 个（删除会断下游，且不在 datasets.json 里）")
+    print(f"{'文件':30s} {'体积MB':>8s} {'拥有':32s} 引用")
+    print("-" * 110)
+    for a in arts:
+        own = ",".join(a["owners"]) + (" [归属歧义]" if a["ambiguous_owner"] else "")
+        print(f"{a['file']:30s} {a['mb']:8.1f} {own:32s} {','.join(a['used_by'][:5])}")
+    print("\n删除前用 `qrg data refs <文件名>` 复核；这些文件应评估提升为 数据源/ 正式数据集。")
+    return 0
+
+
+def cmd_data_consumers(args: argparse.Namespace) -> int:
+    from .registry import RegistryError, refresh_consumers
+
+    try:
+        changed = refresh_consumers(
+            args.registry, data_root=args.data_root, dry_run=args.dry_run
+        )
+    except RegistryError as exc:
+        print(str(exc), file=sys.stderr)
+        return 4
+
+    if not changed:
+        print("consumers 无变化。")
+        return 0
+    print(f"{len(changed)} 条数据集的 consumers 发生变化：")
+    for did, diff in sorted(changed.items()):
+        before = set(diff["before"])
+        after = set(diff["after"])
+        plus = sorted(after - before)
+        minus = sorted(before - after)
+        parts = []
+        if plus:
+            parts.append("+" + ",".join(plus))
+        if minus:
+            parts.append("-" + ",".join(minus))
+        print(f"  {did:44s} {' '.join(parts)}")
+    if args.dry_run:
+        print("[dry-run] 未写文件")
+    else:
+        print("已写回 datasets.json")
+    return 0
+
+
+def cmd_data_list(args: argparse.Namespace) -> int:
+    from .registry import STATUS_ENUM, load_registry
+
+    try:
+        reg = load_registry(args.registry)
+    except Exception as exc:  # noqa: BLE001
+        print(f"读取登记表失败: {exc}", file=sys.stderr)
+        return 4
+
+    rows = reg.datasets
+    if args.filter:
+        p = args.filter.lower()
+        rows = [d for d in rows if p in d["id"].lower() or p in str(d.get("path", "")).lower()]
+    if args.status:
+        rows = [d for d in rows if d.get("status") == args.status]
+
+    print(f"{'id':44s} {'status':14s} {'kind':10s} path")
+    print("-" * 110)
+    for d in rows:
+        print(f"{d['id']:44s} {d.get('status', '?'):14s} {d.get('kind', '?'):10s} {d.get('path', '')}")
+    print(f"\n合计 {len(rows)} 条；status 枚举: {', '.join(sorted(STATUS_ENUM))}")
+    return 0
+
+
+def cmd_data_stat(args: argparse.Namespace) -> int:
+    from .registry import load_registry, probe
+
+    try:
+        reg = load_registry(args.registry)
+        rec = reg.get(args.id)
+    except KeyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 4
+    except Exception as exc:  # noqa: BLE001
+        print(f"读取登记表失败: {exc}", file=sys.stderr)
+        return 4
+
+    p = reg.data_root / str(rec["path"]).replace("\\", "/")
+    pr = probe(p, full=not args.fast)
+    consumers = reg.consumers_of(args.id)
+
+    info = {
+        "id": rec["id"],
+        "path": rec["path"],
+        "abs_path": str(p),
+        "status": rec.get("status"),
+        "kind": rec.get("kind"),
+        "caliber": rec.get("caliber"),
+        "registered": {
+            "frequency": rec.get("frequency"),
+            "pit": rec.get("pit"),
+            "date_column": rec.get("date_column"),
+            "symbol_column": rec.get("symbol_column"),
+            "verified_at": rec.get("verified_at"),
+        },
+        "probed": pr.as_dict(),
+        "consumers": consumers,
+        "gaps": rec.get("gaps") or [],
+        "lineage": rec.get("lineage") or [],
+    }
+    if args.as_json:
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"id      {rec['id']}")
+    print(f"path    {rec['path']}")
+    print(f"status  {rec.get('status')}  ({rec.get('status_reason', '')})")
+    print(f"kind    {rec.get('kind')} | frequency {rec.get('frequency')}")
+    cal = rec.get("caliber")
+    if isinstance(cal, dict):
+        print("caliber " + "; ".join(f"{k}={v}" for k, v in list(cal.items())[:4]))
+    elif cal:
+        print(f"caliber {str(cal)[:120]}")
+    print()
+    if not pr.exists:
+        print("现场探测: 文件不存在！")
+    else:
+        print(f"现场探测 ({pr.format})")
+        print(f"  行数     {pr.rows:,}" if pr.rows is not None else "  行数     ?")
+        print(f"  字段数   {pr.n_fields}")
+        print(f"  体积     {pr.file_mb:.2f} MB" if pr.file_mb is not None else "  体积     ?")
+        if pr.coverage:
+            print(f"  覆盖     {json.dumps(pr.coverage, ensure_ascii=False)}")
+        if pr.field_list:
+            print(f"  字段     {', '.join(pr.field_list[:16])}" + (" ..." if len(pr.field_list) > 16 else ""))
+        if pr.error:
+            print(f"  错误     {pr.error}")
+    print()
+    print(f"被谁使用 ({len(consumers)}) " + (", ".join(consumers) if consumers else "无记录"))
+    if rec.get("gaps"):
+        print(f"\n已知缺口 ({len(rec['gaps'])})")
+        for g in rec["gaps"][:6]:
+            print(f"  - {g.get('text', g)}")
+    return 0
+
+
+def cmd_data_lint(args: argparse.Namespace) -> int:
+    from .lint import lint_all, render, summarize
+    from .registry import load_registry
+
+    try:
+        reg = load_registry(args.registry)
+    except Exception as exc:  # noqa: BLE001
+        print(f"读取登记表失败: {exc}", file=sys.stderr)
+        return 4
+
+    results = lint_all(
+        reg, ids=args.ids, pattern=args.filter, max_rows=args.max_rows
+    )
+    if args.as_json:
+        print(json.dumps(
+            {
+                "summary": summarize(results),
+                "results": [
+                    {
+                        "dataset": r.dataset,
+                        "path": r.path,
+                        "rows_scanned": r.rows_scanned,
+                        "sampled": r.sampled,
+                        "worst": r.worst,
+                        "findings": [
+                            {"level": f.level, "code": f.code, "message": f.message}
+                            for f in r.findings
+                        ],
+                        "skipped": r.skipped,
+                    }
+                    for r in results
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ))
+    else:
+        print(render(results, level=args.level))
+
+    if args.fail_on == "none":
+        return 0
+    n = sum(1 for r in results for f in r.findings if f.level == args.fail_on)
+    return 5 if n else 0
+
+
+def cmd_run_check(args: argparse.Namespace) -> int:
+    from .run_check import check_all_runs, default_research_root, discover_runs, render_run_check
+
+    root = Path(args.research) if args.research else default_research_root()
+    n_runs = len(discover_runs(root))
+    findings = check_all_runs(root)
+    if args.json:
+        print(json.dumps(
+            [{"level": f.level, "code": f.code, "target": f.target, "message": f.message} for f in findings],
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        print(render_run_check(findings, n_runs))
+    return 5 if any(f.level == "fatal" for f in findings) else 0
+
+
+def cmd_data_check(args: argparse.Namespace) -> int:
+    from .registry import check, load_registry, render_findings
+
+    try:
+        reg = load_registry(args.registry)
+    except Exception as exc:  # noqa: BLE001
+        print(f"读取登记表失败: {exc}", file=sys.stderr)
+        return 4
+
+    findings = check(reg, verify_paths=not args.no_verify_paths)
+    if args.as_json:
+        print(json.dumps(
+            [{"level": f.level, "code": f.code, "target": f.target, "message": f.message} for f in findings],
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        print(render_findings(findings))
+    return 5 if any(f.level == "fatal" for f in findings) else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -559,6 +944,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_tail(args)
     if args.command == "gate":
         return cmd_gate(args)
+    if args.command == "run":
+        return cmd_run_check(args)
+    if args.command == "data":
+        sub = {
+            "init": cmd_data_init,
+            "add": cmd_data_add,
+            "consumers": cmd_data_consumers,
+            "refs": cmd_data_refs,
+            "orphans": cmd_data_orphans,
+            "list": cmd_data_list,
+            "stat": cmd_data_stat,
+            "lint": cmd_data_lint,
+            "check": cmd_data_check,
+        }[args.data_command]
+        return sub(args)
     return int(args.func(args))
 
 

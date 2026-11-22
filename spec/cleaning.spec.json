@@ -1,47 +1,259 @@
 {
-  "spec_version": "0.1.0",
+  "spec_version": "0.2.0",
+  "status": "locked",
   "timezone": "Asia/Shanghai",
+  "effective_from": "2026-11-21",
+  "supersedes": ["0.1.0", "data_cleaning_spec.v1.0-locked"],
+  "authority": "本文件是清洗口径的唯一来源。任何脚本、run、报告不得另立阈值或另定规则；仅可引用本条目的键名。",
+  "note": "0.2.0 合并了 量化研究/数据源/data_cleaning_spec.v1.0-locked.json（7 块 + C1–C12 裁决）与 qrg 0.1.0（5 块），并补入 9 类历史实际采纳但从未入契约的处理。关键设计变更：字段级可用性快照已移出契约 —— 规则不随数据状态过期，现状一律读 registry。",
+
+  "sources_of_truth": {
+    "rules": "spec/cleaning.spec.json（本文件）",
+    "thresholds": "rules/*.json 与运行环境；本文件只给键名",
+    "dataset_status": "spec/registry.spec.json → datasets[].status（不再写在契约里）",
+    "run_archive": "spec/run.spec.json",
+    "paradigm_cards": "paradigms/INDEX.md"
+  },
+
   "hard_validation": {
-    "rules": [
-      "primary_key_dup",
-      "high_lt_low",
-      "price_le_zero",
-      "negative_volume",
-      "code_not_whitelisted"
-    ],
+    "rules": ["primary_key_dup", "high_lt_low", "price_le_zero", "negative_volume", "code_not_whitelisted"],
     "code_whitelist": ["60", "68", "00", "30", "8", "4", "920"],
+    "code_whitelist_note": "沪深主板 60/00、科创 68、创业 30；北交所 8/4/920 单独标记 board=bse，不与主板混算涨跌停。非 6 位幽灵码在数据层剔除，不留给研究层过滤。",
+    "violation_rate_max_key": "hard_validation_violation_rate_max",
     "violation_rate_max": 0.001,
+    "violation_rate_fatal_key": "hard_validation_violation_rate_fatal",
     "violation_rate_fatal": 0.01,
-    "on_fail": "L2"
+    "on_fail": "超 max → L2（当日截面暂停）；超 fatal → BLOCKED_FROM_FINAL"
   },
+
+  "dedup_and_units": {
+    "dup_rule": "读任何 CSMAR 原始表前必须按主键去重；去重后仍重复即 BLOCKED",
+    "known_dup": "TRD_Dalyr 同一 (Stkcd, Trddt) 存在 6–8 行完全重复；不去重则收益/成交额放大 6–8 倍。data.parquet 单文件内部无此问题，*.parquet 分片有。",
+    "units": {
+      "Dsmvosd": "千元（不是元、不是万元）",
+      "HoldShares": "万股",
+      "市值字段": "万元",
+      "基金重仓市值": "万元"
+    },
+    "types": "Trddt 等日期字段为 varchar，比较前必须 cast as date，禁止字符串比较日期",
+    "price_precision": "价格按 0.01 元 tick 网格；不做 Decimal 往返舍入以外的二次取整"
+  },
+
   "price_adjustment": {
-    "storage": "raw + daily factor",
-    "factor_definition": "factor = close_hfq / close_raw",
+    "storage": "raw 价 + 逐日 factor；禁止只存前复权价",
+    "factor_definition": "factor = close_hfq / close_raw（上市累计、非递减、除权除息处跳变）",
+    "any_base_rule": "adj(b) = close_raw × factor / factor[b]",
     "qfq_base_date": "2026-07-31",
-    "any_base_rule": "adj(b) = close_raw * factor / factor[b]",
-    "reproduction_tolerance": 0.001
+    "qfq_base_reason": "与既有 daily_factors 的复权基准对齐，保证历史结论可对比",
+    "reproduction_tolerance": 0.001,
+    "reproduction_evidence": "推导 qfq vs 既有 qfq 中位相对误差 ≤ 1e-3（实测 600519 = 2.1e-6）",
+    "splice_rule": "跨源拼接（new_bars 不复权）必须先乘 factor 归一到同一基准，否则禁止拼价格水平",
+    "splice_evidence": "事件法 877 事件/857 只，反验 4.7e-05；CSMAR 续接首日 close 5196/5196 一致",
+    "adj_jump_rule": "|return| > 该板块涨跌停幅度 + 2pp 计为 adj_jump；阈值不内联",
+    "adj_jump_evidence": "CSMAR Dretwd + TRD_NoLimit 后 adj_jump 0.00035%（DQ3 0.0033%，−89.5%）"
   },
+
+  "time_alignment": {
+    "month_end_rule": "月末截面 = 该月最后一个交易日收盘，不得用日历月末",
+    "month_end_evidence": "2018-03-31 是周六；用日历月末曾导致 105 个月里 35 个月整月丢失",
+    "segment_rule": "训练/验证/样本外按日历月切分，不按日期边界；边界落在非交易日时归入前一交易月",
+    "segment_evidence": "2025-01-27 边界案例已在 UNI-002 处理",
+    "forward_return": "远期收益的起点是信号日后的执行日开盘，终点是下期执行日开盘；不得跳过停牌日拼接收益"
+  },
+
   "missing": {
+    "proxy_rule": "禁止 proxy 填充；缺失即 NaN",
     "allow_ffill": false,
-    "grid": "trade_date x listed",
-    "nan_policy": "explicit"
+    "grid": "trade_date × listed",
+    "grid_rule": "所有面板网格化到（交易日 × 在册股票）；停牌日显式 suspended=true 且数值段 NaN",
+    "no_implicit_fill": "禁止 ffill / 隐式 join 补齐；缺失行必须能被下游区分",
+    "rate_threshold_key": "missing_rate_percentile",
+    "nan_policy": "explicit",
+    "unknown_rule": "拿不到就是 UNKNOWN，不得用 0、均值、行业中位数或上期值代替；UNKNOWN 必须能被下游识别为缺失而非真值"
   },
+
+  "outlier": {
+    "method": "MAD_two_layer",
+    "mad_k_key": "mad_k",
+    "fallback": "IQR（MAD=0 时）",
+    "small_sample_key": "small_sample_n",
+    "small_sample_action": "只标记不缩尾",
+    "layer_note": "第一层按日截面 MAD 缩尾，第二层在组合内按因子截断；两层参数互不复用",
+    "neutralization": "仅 申万一级哑变量 + log(总市值)；R² > 0.8 标 high_collinearity",
+    "neutralization_mv_rule": "总市值是默认口径；缺失期可用 log(流通市值) 代理，但必须标 proxy 并在结论里披露",
+    "neutralization_evidence": "实测流通市值 proxy 会掩盖市值暴露（CLN-20261031-001/neutralization_compare.json），故不再作默认口径",
+    "rank_before_portfolio": "组合构建前按截面降序排名归一（0=最优端）；方向约定必须与 SIGN 预锁一致，否则整轮结果作废"
+  },
+
+  "suspension_delisting": {
+    "states": ["suspended", "pre_listing", "post_delist"],
+    "state_rule": "三态必须分开表达，不得混为「缺行」；旧数据以行缺失表达停牌（每股中位 2,289/2,428 天），必须重建网格后才能判 G2",
+    "delist_stop_days_key": "delist_stop_days",
+    "relist_wait_days_key": "relist_wait_days",
+    "delist_residual_key": "delist_residual",
+    "delist_list_status": "LISTING_STATE 为快照 → 只能标 PARTIAL，不得宣称已处理幸存者偏差"
+  },
+
+  "universe_and_board": {
+    "board_classification": "main / star_chinext / bse 三分；分类按代码前缀，不按股票简称",
+    "board_filter_rule": "跨表合并前必须按 board 过滤；board 不同的表不得直接 inner join 当同一股票池",
+    "known_pollution": "yjbb 年报/中报期次混入新三板（12 月期 bse_neeq 50,216 行 vs A 股 45,979 行，样本被撑 2.1 倍）；lrb/xjll 不含新三板 → 四表 universe 不一致",
+    "new_listing_rule": "注册制新股上市前 5 日无涨跌幅限制，不计入 adj_jump 违规",
+    "universe_disclosure": "任何结论必须声明股票池（全市场 / 中证800 / 自定义），池子不同不可比"
+  },
+
+  "limit_and_st": {
+    "board_limits": { "main": 0.10, "star_chinext": 0.20, "bse": 0.30, "st": 0.05 },
+    "st_status": "SNAPSHOT_ONLY",
+    "st_rule": "有当期截面 ST 名录时按 ±5% 识别；历史段无名录一律 UNKNOWN，不得当作 10% 处理，也不得用简称反推当日状态",
+    "st_proxy_band": "|ret| ∈ [4.5%, 5.5%] 标 st_suspect_band，只作提示不冒充识别",
+    "locked_rule": "high==low 且封在限价 → limit_up_locked / limit_down_locked，当日不可买卖",
+    "portfolio_rule": "组合构建必须剔除信号日锁定票，否则回测结果作废（invalid_execution）",
+    "limit_up_unmodeled": "CSMAR LimitUp/LimitDown 2016 年后全 NaN；开仓日涨停买不到未建模，方向偏向高估高频策略"
+  },
+
+  "financial_pit": {
+    "anchor": "NOTICE_DATE ≤ trade_date；盘后（>15:00）顺延 T+1",
+    "coverage_min_key": "announce_coverage_min",
+    "restatement": "重述取 as-of 保守值，不取事后修订值",
+    "long_lag_days": 365,
+    "long_lag_rule": "滞后 > 365 天 → 改用 report_period + 90 天保守锚，标 is_proxy=true，权重 8 折",
+    "long_lag_evidence": "financial_pit 长滞后 4.38%（12,415 行）；NOTICE_DATE 覆盖 100%，中位滞后 57 天",
+    "table_exception_rule": "整表公告日不可信的源，禁用 NOTICE_DATE，直接走 report_period + 90 天",
+    "table_exception_list": {
+      "yjbb": "中位滞后 418 天，>365 天占 86.2% → 禁用 NOTICE_DATE",
+      "lrb": "中位滞后 396 天，>365 天占 87.1% → 禁用 NOTICE_DATE",
+      "xjll": "中位滞后 396 天，>365 天占 87.1% → 禁用 NOTICE_DATE",
+      "yjkb_compliant": "中位滞后 59 天，>365 天占 0.0% → 可直接作 PIT 锚"
+    }
+  },
+
+  "industry_pit": {
+    "requirement": "必须有 classification_version + vendor_vintage_date",
+    "standard": "SW2021",
+    "asof_rule": "按 effective_from as-of 取值；同一 code 同日多版本取最后生效版本",
+    "unavailable_rule": "无 vintage 的行业字段即 UNKNOWN，不得入模；历史段结论须标「行业快照前视」",
+    "evidence": "industry_pit_sw.parquet 月末覆盖 99.97%；panel.industry_name 跨月变动 = 0 是前视指纹"
+  },
+
   "lookahead": {
     "require_replay": true,
+    "replay_rule": "截断回放：把数据截到 t 日重算因子，与全量结果比对，差异必须为 0",
     "forbid_negative_shift": true,
     "forbid_centered_window": true,
-    "financial_anchor": "NOTICE_DATE"
+    "financial_anchor": "NOTICE_DATE",
+    "blacklist": [
+      { "field": "lhb.D1..D30", "reason": "龙虎榜次日及后续收益字段，是前视", "action": "禁止入模" },
+      { "field": "financial.UPDATE_DATE", "reason": "数据更新日，晚于公告日", "action": "禁止入模" },
+      { "field": "TRD_Dalyr.LimitStatus", "reason": "2016–2026 全为 0，字段存在但无信息", "action": "判缺口前必须实测填充率，不得凭列存在与否下结论" },
+      { "field": "panel.industry_name", "reason": "跨月零变动 = 静态快照被当日回填", "action": "禁止作历史行业" },
+      { "field": "Opnprc 之外的开盘价替代", "reason": "曾误判 Opnprc 缺失并改用 close 代理", "action": "Opnprc 填充率 100%，必须用真实开盘" }
+    ],
+    "field_audit_rule": "判定「数据缺口」前必须实测字段填充率，不得只看列是否存在"
   },
+
   "execution": {
-    "price_basis": "vwap",
-    "fallback": "close",
+    "price_basis": "t_plus_1_open",
+    "price_basis_rule": "信号日收盘生成订单，次一交易日开盘成交",
+    "open_adj_rule": "open_adj = close_adj × Opnprc / Clsprc（不复权开盘比，乘到复权收盘上）",
+    "open_missing_rate": 0.000188,
+    "fallback": "无开盘价时该标的当日不可成交（不是退回 close）",
     "t_plus": 1,
-    "participation_cap": 0.1
+    "participation_cap": 0.1,
+    "vwap_note": "0.1.0 曾写 price_basis=vwap，已废止：库内无分钟线，vwap 物理上不可实现。保留为未来可选项，当前不得用于任何结论。",
+    "locked_exclusion": "见 limit_and_st.portfolio_rule"
   },
+
+  "cost": {
+    "comm_bp": 2.6,
+    "comm_side": "both",
+    "stamp_bp": 5.0,
+    "stamp_side": "sell_only",
+    "transfer_bp": 0.0,
+    "impact_form": "eta * sigma_i(20d) * sqrt(Q_i / ADV20_i)",
+    "impact_eta": 0.5,
+    "impact_status": "uncalibrated",
+    "impact_note": "A 股无公开冲击曲线可校准；eta 减半后结论必须复核，必要时并列披露",
+    "linear_unit_bp": 10.2,
+    "linear_unit_rule": "线性项 = 2×佣金 + 印花税（卖出腿），冲击项单独计；分解成本时不得用单腿冲击除以双腿总成本",
+    "fixed_comparison": "历史 run 用固定 0.2%/月；该口径下的 Sharpe 一律视为毛值，与换手驱动口径不可直接比较",
+    "short_cost_unmodeled": "未含融券成本，空头腿实际成本更高",
+    "turnover_definition": "换手 = 目标权重差的绝对值之和 × 0.5（单边）；不含持仓市值漂移，相对低估 6%–10%（成本 +18bp~+86bp/年）"
+  },
+
+  "portfolio_constraints": {
+    "band_rule": "进池 pct ≤ q − b，留池 pct ≤ q + b，空头腿镜像",
+    "band_evidence": "带宽只降低成本不改善 OOS（FREQ-20261121-001：Δ净 −1.419→−0.052，ΔOOS −2.140→−0.900）",
+    "phase_rule": "低频调仓必须报告全部起始相位的净 Sharpe；单相位结论一律不可引用",
+    "phase_evidence": "季三相位净 Sharpe 0.10/0.18/0.57，双月 0.39/0.04",
+    "weighting": "等权（默认）；市值权重必须显式声明",
+    "quantile_default": "q5（0.2）；q10 全面劣于 q5，非必要不用",
+    "long_short_note": "A 股空头不可得，多空 Sharpe 必须同时给出纯多头超额 IR，否则高估策略"
+  },
+
+  "data_status_enum": {
+    "values": ["AVAILABLE", "DERIVED", "PARTIAL", "STALE", "SNAPSHOT_ONLY", "UNAVAILABLE", "FROZEN", "BLOCKED"],
+    "meaning": {
+      "AVAILABLE": "可直接入模",
+      "DERIVED": "由可用字段推导，须标推导式与基准日",
+      "PARTIAL": "覆盖不全或仅部分可用，须标覆盖区间与缺口",
+      "STALE": "有历史但停止更新，须标 coverage_end",
+      "SNAPSHOT_ONLY": "只有当期截面，历史段一律 UNKNOWN",
+      "UNAVAILABLE": "无源，禁止使用",
+      "FROZEN": "已固化不再更新，只作回溯",
+      "BLOCKED": "上游不可达，适配器应显式报错而非静默回退"
+    },
+    "rule": "状态写在 registry 的 datasets[].status，不写在契约里；契约只定义枚举与含义"
+  },
+
   "artifacts": [
-    "data_quality_report.json",
-    "clean_report.json",
+    "data_clean_report.json",
     "trading_flags.parquet",
-    "cleaning_sensitivity.json"
-  ]
+    "cleaning_sensitivity.json",
+    "data_quality_report.json"
+  ],
+  "artifacts_note": "四件套为一次清洗的必备产物；clean_report.json 是 data_clean_report.json 的旧别名，新产物一律用后者。规范产物必须登记到 registry 并在 datasets[].consumers 里声明下游，否则视为孤儿产物。",
+
+  "trial_registry_required": true,
+
+  "rulings": {
+    "note": "C1–C12 来自 v1.0-locked，保留原文并更新实施状态；C13–C18 为 0.2.0 合并时新裁决。",
+    "items": [
+      { "id": "C1", "topic": "复权口径", "ruling": "存 raw + factor，qfq 派生", "stricter": "old+new(合并)", "implementation_status": "PARTIAL", "verified_by": "事件法拼接 4.7e-05；全量逐日 factor 仍需 DQ2" },
+      { "id": "C2", "topic": "幽灵代码", "ruling": "数据层 6 位白名单", "stricter": "new", "implementation_status": "DONE", "verified_by": "hard_validation 0 违规" },
+      { "id": "C3", "topic": "停牌", "ruling": "网格化 + 显式 suspended + NaN", "stricter": "new(加强)", "implementation_status": "DONE", "verified_by": "trading_flags 三态" },
+      { "id": "C4", "topic": "涨跌停", "ruling": "10/20/30 + ST 5% + 新股无限制", "stricter": "old+修正", "implementation_status": "DONE", "verified_by": "CLN-20261031-001/trading_flags（ST 历史段仍 UNKNOWN）" },
+      { "id": "C5", "topic": "财务 PIT", "ruling": "NOTICE_DATE + 覆盖率门 + 保守锚并用", "stricter": "合并", "implementation_status": "DONE", "verified_by": "financial_pit 283,498 行，NOTICE_DATE 100%" },
+      { "id": "C6", "topic": "行业", "ruling": "PIT 必填，缺则 UNKNOWN", "stricter": "old", "implementation_status": "DONE", "verified_by": "industry_pit_sw.parquet，月末覆盖 99.97%" },
+      { "id": "C7", "topic": "退市", "ruling": "快照核对 + PARTIAL", "stricter": "new(部分)", "implementation_status": "DONE", "verified_by": "LISTING_STATE 快照" },
+      { "id": "C8", "topic": "市值", "ruling": "总市值；缺期 proxy 披露", "stricter": "old", "implementation_status": "DONE", "verified_by": "market_cap.parquet 日频，2018-01 起" },
+      { "id": "C9", "topic": "日历", "ruling": "建日历并交叉校验", "stricter": "old", "implementation_status": "DONE", "verified_by": "calendar.parquet 8,797 交易日 + 制度区间" },
+      { "id": "C10", "topic": "指数基准", "ruling": "补齐 6 指数", "stricter": "old", "implementation_status": "DONE", "verified_by": "index_daily.parquet（价格指数，不含分红）" },
+      { "id": "C11", "topic": "两融/龙虎榜 PIT", "ruling": "滞后 1 日；D1..D30 禁用", "stricter": "一致", "implementation_status": "DONE", "verified_by": "lookahead.blacklist" },
+      { "id": "C12", "topic": "试验登记/指纹", "ruling": "trial_registry + 指纹", "stricter": "new", "implementation_status": "DONE", "verified_by": "gov/registry.py" },
+
+      { "id": "C13", "topic": "成交价口径冲突", "old": "qrg 0.1.0 = vwap（fallback close）", "new": "全部实际结论 = T+1 开盘", "ruling": "以 T+1 开盘为准；vwap 废止（无分钟线，不可实现）", "stricter": "new", "implementation_status": "DONE", "verified_by": "UNI-20261121-002、FREQ-20261121-001 均按 T+1 开盘" },
+      { "id": "C14", "topic": "st_status 重复键", "old": "v1.0-locked 的 field_availability 里 st_status 出现两次，后者( UNAVAILABLE )覆盖前者( SNAPSHOT_ONLY )", "new": "应取 SNAPSHOT_ONLY（有 794 只当期快照）", "ruling": "裁定 SNAPSHOT_ONLY；历史段 UNKNOWN", "stricter": "new", "implementation_status": "DONE", "verified_by": "本次合并去重，原文件归档 spec/history/" },
+      { "id": "C15", "topic": "产物命名冲突", "old": "v1.0 = data_clean_report.json；qrg 0.1.0 = clean_report.json", "new": "—", "ruling": "统一 data_clean_report.json；clean_report 作别名", "stricter": "old", "implementation_status": "DONE", "verified_by": "artifacts_note" },
+      { "id": "C16", "topic": "字段可用性归属", "old": "v1.0-locked 把 field_availability 写进契约", "new": "契约只写规则", "ruling": "可用性快照移入 registry.datasets[].status", "stricter": "new", "implementation_status": "DONE", "verified_by": "sources_of_truth" },
+      { "id": "C17", "topic": "长滞后表", "old": "一律用 NOTICE_DATE", "new": "yjbb/lrb/xjll 中位滞后 396–418 天", "ruling": "整表禁用 NOTICE_DATE，走 report_period + 90 天", "stricter": "new(修正)", "implementation_status": "DONE", "verified_by": "CLN-LEGACY-PROMOTE-20261121" },
+      { "id": "C18", "topic": "缺口判定方法", "old": "凭列是否存在判缺口", "new": "实测填充率", "ruling": "未测填充率不得写「缺」；只能写「待核」", "stricter": "new", "implementation_status": "DONE", "verified_by": "Opnprc 误判事件（填充率 100%）；LimitStatus 全 0 反例" }
+    ]
+  },
+
+  "provenance": {
+    "merged_from": [
+      "spec/history/cleaning.v1.0-locked.original.json",
+      "spec/CHANGELOG.md"
+    ],
+    "audit_doc": "量化研究/数据源/数据清洗目标与缺口审计.md",
+    "paradigms": "paradigms/INDEX.md",
+    "evidence_runs": [
+      "research/00_infrastructure/runs/CLN-20261031-001",
+      "research/00_infrastructure/runs/CLN-LEGACY-PROMOTE-20261121",
+      "research/00_infrastructure/runs/UNI-20261121-002",
+      "research/00_infrastructure/runs/FREQ-20261121-001",
+      "research/00_infrastructure/runs/BEAR-20261121-001"
+    ]
+  }
 }

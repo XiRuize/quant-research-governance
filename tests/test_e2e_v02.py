@@ -151,6 +151,7 @@ def test_clean_writes_gate_and_provenance(capsys) -> None:
     gate = json.loads((out / "gate.json").read_text(encoding="utf-8"))
     assert gate["status"] in {"pass", "warn"}
     prov = json.loads((out / "provenance.json").read_text(encoding="utf-8"))
-    assert prov["spec_version"] == "0.1.0"
+    expected = json.loads(SPEC.read_text(encoding="utf-8"))["spec_version"]
+    assert prov["spec_version"] == expected
     assert "regime.cn.json" in prov["rule_hashes"]
     assert verify_manifest(out)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qrg"
-version = "0.6.2"
+version = "0.7.1"
 description = "Quant research data cleaning & governance standard library"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,9 @@ packages = ["src/qrg"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# 本机 tmp 根因中文用户名被回退到 cwd，导致每次跑测都留下 pytest-of-* 目录。
+# 通过的用例不保留临时目录，失败时仍保留以便排查。
+tmp_path_retention_policy = "failed"
 
 
 

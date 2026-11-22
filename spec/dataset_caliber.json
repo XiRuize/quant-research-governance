@@ -1,0 +1,64 @@
+{
+  "spec_version": "1.0.0",
+  "note": [
+    "caliber（口径）属于治理层，不属于数据层。",
+    "datasets.json 由 `qrg data init --from-legacy` 从旧表机械合并，重跑会覆盖；",
+    "凡是『这张表能回答什么问题』这种需要人判断的内容，一律写在本文件里，",
+    "由 load_registry() 在读取时覆盖进 datasets[].caliber，并记 caliber_source。",
+    "这样口径修订不需要重跑迁移，也不会被下一次 init 冲掉。"
+  ],
+  "overrides": {
+    "panel_monthly_csi800": {
+      "caliber": "中证800 成分股的月度面板：每月末成分 + 权重 + 收盘 + 流通市值 + 成交额/量。收益列用 CSMAR Dretwd（含红利再投资），不是价格涨跌幅。回答『这 800 只在某月的价量市值长什么样』。",
+      "caveats": [
+        "仅覆盖 Indexcd=000906 一个指数，不是全市场",
+        "Dsmvosd 原始单位千元，已 ×1000 转元",
+        "TRD_Dalyr 同 (Stkcd,Trddt) 有 6–8 行完全重复，此处已去重"
+      ]
+    },
+    "panel_constituents_csi800": {
+      "caliber": "中证800 成分股的月末成分与权重（Enddt + code + weight），84,000 行 = 105 月 × 800 只。回答『某月末哪些票在指数里、权重多少』，用于构造指数增强的基准与成分过滤。",
+      "caveats": [
+        "只覆盖中证800（Indexcd=000906），缺中证500/1000",
+        "IDX_Smprat 逐日快照有 3–4 行完全重复，已按 Enddt+Stkcd 去重"
+      ]
+    },
+    "panel_factor_silence": {
+      "caliber": "单票月度因子宽表（ym × code）：ret / circ_mv / amount / amt_share / turn / turn_3m / vol_3m / ret_3m / f20 / f60 / f120 / mdd120。回答『某月末某票的收益、换手、波动、动量、回撤是多少』，是因子研究的原始输入之一。",
+      "caveats": [
+        "f20/f60/f120/mdd120 在 2026-07 之后为空，属正常（无未来数据），不是缺数",
+        "月末取『该月最后一个交易日』；旧版用日历月末曾整月丢失 35 个月"
+      ]
+    },
+    "panel_inst_monthly": {
+      "caliber": "单票月度资金与机构行为面板：两融余额/净买入/融资天数、龙虎榜机构买卖家数、东财流通市值。回答『某月末这只票的杠杆资金与机构席位行为如何』。",
+      "caveats": [
+        "两融与龙虎榜均止于 2025-07-31，之后为 NaN，未插补",
+        "龙虎榜席位名已脱敏，机构只能用「N 家机构买入/卖出」的家数近似",
+        "float_mv_em 为东财口径，与 CSMAR 流通市值不可直接混用"
+      ]
+    },
+    "panel_market_regime": {
+      "caliber": "月度市场状态序列（沪深300）：净值、12 月均线、12 月收益、回撤，以及按自定规则打的市场状态标签 regime。回答『某月属于牛/熊/震荡』，用于分段检验与仓位开关。",
+      "caveats": [
+        "regime 是自定规则（ret12>5% 且 nav>ma12 → bull；ret12<−5% 且 nav<ma12 → bear；其余震荡），不是任何机构的官方划分",
+        "基准是沪深300，不是中证800；与 csi800 面板混用前须对齐基准"
+      ]
+    },
+    "eastmoney_report_em": {
+      "caliber": "东方财富研报元数据（infoCode / title / 机构 / 分析师 / 发布日 / 评级 / 页数）。回答『某段时间哪些机构发了什么研报、给了什么评级』。仅元数据，不含 PDF 正文。",
+      "caveats": [
+        "单一源（东财 reportapi），无全文 PDF，研报深度只能用 attachPages 页数近似",
+        "历史起点约 2017-02（实测最早 2017-03）",
+        "覆盖的是东财签约转载池：中小券商与官方机构较全，头部大所 0 收录"
+      ]
+    },
+    "csmar_fund_industry_class": {
+      "caliber": "CSMAR 基金行业股票分类表（Fund_IndustryStockClass）：把基金按行业分类体系归类。回答『这只基金属于哪个行业主题』，用于基金层面的行业暴露与同类分组。",
+      "caveats": [
+        "行业分类体系不唯一（IndClassifySystemCode），跨体系不可直接比",
+        "只到基金层面，不含个股持仓明细"
+      ]
+    }
+  }
+}

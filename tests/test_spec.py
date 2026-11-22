@@ -14,8 +14,31 @@ SPEC = ROOT / "spec" / "cleaning.spec.json"
 
 def test_load_default_spec() -> None:
     doc = load_spec(SPEC)
-    assert doc.spec_version == "0.1.0"
+    assert all(p.isdigit() for p in doc.spec_version.split("."))
+    assert len(doc.spec_version.split(".")) == 3
     assert doc.price_adjustment.qfq_base_date.year == 2026
+
+
+def test_spec_merged_legacy_contract() -> None:
+    """0.2.0 起契约必须携带 v1.0-locked 并入的 9 块与 C1–C18 裁决。"""
+    doc = load_spec(SPEC)
+    extra = doc.model_extra or {}
+    for block in (
+        "dedup_and_units",
+        "time_alignment",
+        "universe_and_board",
+        "limit_and_st",
+        "financial_pit",
+        "industry_pit",
+        "outlier",
+        "cost",
+        "portfolio_constraints",
+        "data_status_enum",
+    ):
+        assert block in extra, f"missing merged block: {block}"
+    rulings = {r["id"] for r in extra["rulings"]["items"]}
+    assert {"C13", "C14", "C15", "C16", "C17", "C18"} <= rulings
+    assert doc.execution["price_basis"] == "t_plus_1_open"
 
 
 def test_to_panel_spec() -> None:

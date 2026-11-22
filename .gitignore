@@ -16,3 +16,5 @@ pytest-cache-files-*/
 examples/_real/
 
 .qrg_parts_bench/
+
+pytest-of-*/
