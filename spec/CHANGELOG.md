@@ -72,3 +72,14 @@ panel / panel_official_backup / yjbb / yjkb_compliant 的 P11 前视指纹与 lr
 P04 NOTICE_DATE 失效已回写登记表。
 
 **registry.spec 1.0.2**：commands 段补 `qrg run check`。
+
+## pkg 0.7.2 / run.spec 1.0.1 — 2026-11-22
+
+**评估语义立卡 P12**（paradigms/P12_evaluation_semantics.md）：四段切分（live=2026-07 起只多、
+归属按收益实现期末、n<12 标 INSUFFICIENT）、因子看多空/实盘只多（十分组 10%/10%）、
+beta 双报边界（因子评估控制 beta；择时/配置绝对收益不盲目剥离；原始与 alpha 并列、双基准硬要求）、
+隔夜跳空单列披露不额外扣（T+1 开盘成交下已内嵌，额外扣=双重计费）。
+
+同步修订：eval_caliber_v2.md §4 补「跳空不是成本项」明文、§5 补「剥离适用边界」表；
+run.spec caliber_registry 的 EVAL-CALIBER-v2.2 描述扩充并升 1.0.1（无结构变更）。
+INDEX 路由「做组合构建 / 报 Sharpe」加入 P12。

@@ -1,12 +1,10 @@
 {
-  "spec_version": "1.0.0",
+  "spec_version": "1.0.1",
   "status": "locked",
   "effective_from": "2026-11-21",
   "scope": "研究轮次（run）的归档结构与 run.json 字段。只管『产物怎么放、结论怎么写』，不管『研究怎么做』。",
-
   "design_principle": "最小必需集，不规定形态。目录分段是『语义槽位』不是『必填槽位』，run.json 是『必填槽位』。",
   "why_not_seven_segments": "实测 74 个 run 目录有 22 种不同的顶层子目录组合，强制七段会破坏 40+ 个已有路径引用，且没有一个历史 run 是『为了少建目录』而做错的。错的是一半 run 没有可机读的结论字段。",
-
   "required_layout": {
     "must": [
       "run.json",
@@ -18,7 +16,6 @@
       "把中间件写进 07_deliver（交付层只放定稿）"
     ]
   },
-
   "segment_vocabulary": {
     "note": "固定语义，按需创建；不得自造不带序号的分段名。22 种历史变体中凡不符合本表的，一律标 shape_legacy。",
     "00_anchor": "锚定物：复现所需的原始输入快照/哈希",
@@ -31,7 +28,6 @@
     "06_backtest": "回测：选档、稳健性、容量",
     "07_deliver": "交付：白皮书、审计链"
   },
-
   "run_json": {
     "schema_field": "schema",
     "schema_value_v1": "qrg-run-v1",
@@ -70,18 +66,32 @@
       "outputs": "artifacts.results"
     }
   },
-
   "verdict_vocabulary": {
     "pattern": "^[A-Z][A-Z0-9_]{2,}$",
     "rule": "verdict.code 必须匹配上式为 UPPER_SNAKE；组合式判定（如 CONDITIONAL_SURVIVED_CAPACITY_FAIL）允许，但必须能被 split 成已知词根",
     "known_roots": [
-      "PASS", "FAIL", "FALSIFIED", "SURVIVED", "CONDITIONAL", "PRECHECK",
-      "NEGATIVE", "POSITIVE", "DEFERRED", "PARTIAL", "BLOCKED", "UNPRED",
-      "CAPACITY", "COMBO", "UNVERIFIED", "MIGRATED", "NOT_DOABLE", "WARN",
-      "CONFIRMED", "INCONCLUSIVE"
+      "PASS",
+      "FAIL",
+      "FALSIFIED",
+      "SURVIVED",
+      "CONDITIONAL",
+      "PRECHECK",
+      "NEGATIVE",
+      "POSITIVE",
+      "DEFERRED",
+      "PARTIAL",
+      "BLOCKED",
+      "UNPRED",
+      "CAPACITY",
+      "COMBO",
+      "UNVERIFIED",
+      "MIGRATED",
+      "NOT_DOABLE",
+      "WARN",
+      "CONFIRMED",
+      "INCONCLUSIVE"
     ]
   },
-
   "caliber_registry": {
     "note": "口径不是自由文本。已知口径必须在此登记，跨 run 比较前先查此表。",
     "entries": {
@@ -90,12 +100,11 @@
       "UNI-CALIBER-v1": "统一窗口 2018-01~2026-06，train60/val24/oos18，固定 0.2%/月",
       "UNI-CALIBER-v2": "T+1 开盘 + 换手驱动成本（2.6bp 双边 + 5bp 印花 + 冲击 η=0.5），替代 v1",
       "FREQ-GRID-v1": "继承 v2 成本与执行，加五频率 × 相位 × 带宽网格",
-      "EVAL-CALIBER-v2.2": "统一评估口径 v2.2（2026-11-21 立，research/registry/eval_caliber_v2.md）：1.3bp 单边佣金 + 5bp 印花 + 冲击 η=0.5，T+1 开盘，可执行宇宙（涨停禁买 + ADV 下限），分段对齐 UNI-CALIBER-v2，补 R3/R70 落地与分组前风格中性化。v2.1 因把买不到的股票留在持仓而虚高，其数值不得引用",
+      "EVAL-CALIBER-v2.2": "统一评估口径 v2.2（2026-11-21 立，research/registry/eval_caliber_v2.md）：1.3bp 单边佣金 + 5bp 印花 + 冲击 η=0.5，T+1 开盘，可执行宇宙（涨停禁买 + ADV 下限），分段对齐 UNI-CALIBER-v2，补 R3/R70 落地与分组前风格中性化。v2.1 因把买不到的股票留在持仓而虚高，其数值不得引用。四段切分 train/val/oos/live（live=2026-07-01 起、只多、归属按收益实现期末；n<12 标 INSUFFICIENT）；因子有效性看多空 D10−D1、实盘看只多 D10（十分组 10%/10%）；原始收益与 beta 调整后 alpha 并列报告（因子评估须控制 beta，择时/配置绝对收益不盲目剥离）；隔夜跳空单列披露，T+1 开盘成交下不额外扣减（详见范式 P12）。权威实现 research/registry/eval_caliber_v2.md + scripts/qm_eval.py，范式卡 paradigms/P12",
       "fixed_single_side_30bps": "固定单边 30bp 成本口径（QM-20261102-001 及此前基线轮）。与 UNI-CALIBER-v2（换手驱动 + 冲击）不可直接互比，跨 run 比 Sharpe 前须换算",
       "legacy_caliber": "旧体系（90_legacy）口径，未迁移到现行清洗体系，不得作为现行结论引用"
     }
   },
-
   "check_rules": {
     "fatal": [
       "run.json 不存在",
@@ -111,16 +120,22 @@
       "顶层子目录名不在 segment_vocabulary 内（标 shape_legacy）"
     ]
   },
-
   "migration_notes": {
     "existing_runs": 74,
     "with_run_json": 63,
     "missing_run_json": 11,
     "missing_run_json_list": [
-      "CLN-CSMAR-COMPARE", "CLN-CSMAR-DQ3", "CLN-CSMAR-DRET",
-      "CLN-CSMAR-NL-DQ3", "CLN-CSMAR-NL-DRET",
-      "QM-20261031-001", "QM-20261102-001", "QM-20261121-003S",
-      "CR-20261105-001", "QM-20261119-106", "QM-DEBUG"
+      "CLN-CSMAR-COMPARE",
+      "CLN-CSMAR-DQ3",
+      "CLN-CSMAR-DRET",
+      "CLN-CSMAR-NL-DQ3",
+      "CLN-CSMAR-NL-DRET",
+      "QM-20261031-001",
+      "QM-20261102-001",
+      "QM-20261121-003S",
+      "CR-20261105-001",
+      "QM-20261119-106",
+      "QM-DEBUG"
     ],
     "distinct_shapes": 22,
     "policy": "存量一律标 shape_legacy + legacy schema，不返工目录、不重排文件；只给 11 个缺 run.json 的补最小字段（run_id/title/family/created_at/caliber/verdict）。新 run 一律 qrg-run-v1。",
@@ -137,9 +152,15 @@
       "note": "只有 run_id 达到 100%。字段名总数 200+，同义字段（title/question/research_question、artifacts/outputs）并存，故 v1 引入 aliases 而非重命名存量。"
     }
   },
-
   "provenance": {
     "evidence": "对 research/ 下 74 个 run 目录与 63 个 run.json 的穷举统计（2026-11-21）",
-    "related": ["spec/cleaning.spec.json", "spec/registry.spec.json", "research/迁移总控.md §6 交付规范"]
+    "related": [
+      "spec/cleaning.spec.json",
+      "spec/registry.spec.json",
+      "research/迁移总控.md §6 交付规范"
+    ]
+  },
+  "revision_note": {
+    "caliber_v22_desc": "2026-11-22 描述扩充（live 段/多空只多/十分组/beta 双报/跳空判定），语义与 eval_caliber_v2.md 对齐，无结构变更"
   }
 }

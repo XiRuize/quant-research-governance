@@ -13,7 +13,7 @@
 | 新接入一批原始表 | P07（去重/单位）→ P06（板块）→ P11（黑名单） |
 | 建行情面板 / 建因子 | P01（网格）→ P02（复权）→ P08（时间对齐） |
 | 用财务或行业字段 | P04（财务 PIT）→ P05（行业 PIT） |
-| 做组合构建 / 报 Sharpe | P09（缩尾中性化）→ P10（执行成本）→ P03（涨跌停锁死） |
+| 做组合构建 / 报 Sharpe | P09（缩尾中性化）→ P10（执行成本）→ P12（评估语义）→ P03（涨跌停锁死） |
 | 写「数据缺口」结论 | P11（先测填充率，再判缺） |
 | 引用历史结论 | `spec/run.spec.json` → `run.json.caliber`，确认成本口径 |
 
@@ -32,6 +32,7 @@
 | [P09](P09_winsor_neutralize.md) | 缩尾与中性化 | 两层 MAD；只中性化行业 + ln(总市值) | `DONE` |
 | [P10](P10_execution_and_cost.md) | 执行与成本 | T+1 开盘；成本随换手走，不随心情走 | `DONE` / `UNCALIBRATED` |
 | [P11](P11_lookahead_blacklist.md) | 前视黑名单 | 字段存在 ≠ 字段能用 | `DONE` |
+| [P12](P12_evaluation_semantics.md) | 评估语义 | 四段切分；因子看多空、实盘只多；beta 双报不许只报一个 | `DONE` |
 
 ## 三条元规则
 
